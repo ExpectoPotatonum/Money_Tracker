@@ -1,0 +1,84 @@
+name: Supabase CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/supabase.yml'
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/supabase.yml'
+
+jobs:
+  lint-test-and-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Format check
+        run: deno fmt --check
+
+      - name: Lint
+        run: deno lint
+
+      # parser.ts and merchantResolver.ts are pure functions by design
+      # (ARCHITECTURE.md §4) — no DB/network mocking needed here.
+      - name: Unit tests
+        run: deno test --allow-read functions/ tests/
+
+      # Required check for any PR touching parser_templates or parser.ts.
+      # Replays every stored sample_input against its body_pattern so a
+      # "fixed HLB, broke TnG" regression fails in CI, not in prod.
+      # See agents.md §9/§15 and ARCHITECTURE.md §4.
+      - name: Parser template regression harness
+        run: deno run --allow-read --allow-env scripts/replay-templates.ts
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: supabase
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply every migration, in order, to a fresh Postgres
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for f in $(ls migrations/*.sql | sort); do
+            echo "Applying $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      # Placeholder — replace with real fixture rows once there's seed
+      # data. These should each raise (trigger rejects the mutation),
+      # not silently succeed. See ARCHITECTURE.md §6.
+      - name: Verify immutability triggers actually reject mutation
+        env:
+          PGPASSWORD: postgres
+        run: |
+          echo "TODO: insert a fixture raw_notifications row, attempt to"
+          echo "UPDATE its text_body, assert the trigger raises. Same for"
+          echo "parser_templates.body_pattern. Wire up once fixtures exist."
