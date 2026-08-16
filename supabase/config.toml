@@ -1,0 +1,16 @@
+# Supabase CLI project config (https://supabase.com/docs/reference/cli/config).
+# Edge Functions are invoked without a user JWT by Database Webhooks and
+# crontab, so verify_jwt is off for both; the parse-notification endpoint only
+# acts on rows that exist and are still pending, and check-alerts only reads
+# aggregates and upserts alerts under RLS via the service-role client.
+
+project_id = "expense-tracker"
+
+[functions.parse-notification]
+verify_jwt = false
+
+# Scheduled evaluation of the §11 runbook thresholds (device_offline,
+# parse_spike). See functions/check-alerts/index.ts.
+[functions.check-alerts]
+verify_jwt = false
+schedule = "every 30 minutes"

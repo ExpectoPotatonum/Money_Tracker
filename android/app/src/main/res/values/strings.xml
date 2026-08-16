@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Expense Tracker</string>
+    <string name="listener_service_name">Notification capture listener</string>
+    <string name="capture_service_channel_name">Capture service</string>
+    <string name="capture_service_title">Capturing banking notifications</string>
+    <string name="capture_service_text">Running in the background to capture spending notifications</string>
+    <string name="tab_status">Status</string>
+    <string name="tab_settings">Settings</string>
+    <string name="status_listener_connected">Notification listener connected</string>
+    <string name="status_listener_disconnected">Notification listener disconnected</string>
+    <string name="status_notification_access">Notification access granted</string>
+    <string name="status_last_captured">Last captured</string>
+    <string name="status_never_captured">Never</string>
+    <string name="status_unsynced_count">Unsynced rows</string>
+    <string name="status_heartbeat">Last heartbeat</string>
+    <string name="settings_supabase_url">Supabase URL</string>
+    <string name="settings_supabase_email">Supabase email</string>
+    <string name="settings_supabase_password">Supabase password</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_saved">Saved</string>
+    <string name="settings_open_listener_settings">Open notification access</string>
+    <string name="settings_battery_exemption">Battery exemption</string>
+    <string name="settings_untracked_packages">Tracked packages</string>
+    <string name="settings_redaction_note">OTPs, balances and account numbers are redacted before upload</string>
+</resources>

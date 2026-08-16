@@ -33,7 +33,19 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Format check (Prettier, ARCHITECTURE.md §7)
+        run: npm run format:check
+
+      # Placeholder values: the bundle only needs a well-formed URL/key to
+      # construct the Supabase client (RLS and the real project URL protect
+      # data). The e2e suite mocks the REST layer, and auth.spec asserts the
+      # gate that renders when there is no session — nothing here hits a live
+      # project. Deploy config (netlify.toml) supplies real values via Netlify
+      # env vars when that becomes relevant.
       - name: Build
+        env:
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder
         run: npm run build
 
       # Deliberately light per ARCHITECTURE.md §8 — a handful of

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<notification-filter
+    xmlns:android="http://schemas.android.com/apk/res/android">
+    <action android:name="android.service.notification.NotificationListenerService.ACTION_CONNECTED" />
+    <action android:name="android.service.notification.NotificationListenerService.ACTION_INTERRUPTION_FILTER_CHANGED" />
+    <action android:name="android.service.notification.NotificationListenerService.ACTION_NOTIFICATION_CHANNEL_GROUP_REMOVED" />
+    <action android:name="android.service.notification.NotificationListenerService.ACTION_NOTIFICATION_CHANNEL_REMOVED" />
+    <action android:name="android.service.notification.NotificationListenerService.ACTION_SNOOZED" />
+</notification-filter>

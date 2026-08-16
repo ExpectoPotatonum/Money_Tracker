@@ -63,6 +63,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Bare Postgres has no Supabase auth schema. Apply the CI-only stubs
+      # first so auth.users FKs and auth.uid() resolve during migration.
+      - name: Bootstrap auth schema stubs
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/_bootstrap_auth.sql
+
       - name: Apply every migration, in order, to a fresh Postgres
         env:
           PGPASSWORD: postgres
@@ -72,13 +79,10 @@ jobs:
             psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
           done
 
-      # Placeholder — replace with real fixture rows once there's seed
-      # data. These should each raise (trigger rejects the mutation),
-      # not silently succeed. See ARCHITECTURE.md §6.
-      - name: Verify immutability triggers actually reject mutation
+      # ARCHITECTURE.md §6 — both immutability triggers must raise on the
+      # mutation they exist to block, not silently succeed. Also smoke-tests
+      # that the legitimate parse-status update path is still allowed.
+      - name: Verify immutability triggers reject mutation
         env:
           PGPASSWORD: postgres
-        run: |
-          echo "TODO: insert a fixture raw_notifications row, attempt to"
-          echo "UPDATE its text_body, assert the trigger raises. Same for"
-          echo "parser_templates.body_pattern. Wire up once fixtures exist."
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f tests/verify_immutability_triggers.sql

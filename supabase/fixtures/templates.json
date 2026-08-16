@@ -1,0 +1,43 @@
+{
+  "comment": "PLACEHOLDER templates awaiting phase-1 real captures (agents.md §14). Sample inputs are written against the SANITIZED form of a notification — OTPs, balances, and account/card numbers already stripped (agents.md §8). Replace these bodies/samples with real device captures before relying on parse results; the shape (sample_input + sample_expected) is the regression baseline the harness replays.",
+  "templates": [
+    {
+      "id": "tpl-tng-1",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TnG eWallet",
+      "version": 1,
+      "active": true,
+      "title_pattern": null,
+      "body_pattern": "You have paid RM\\s*(?<amount>[\\d,]+\\.\\d{2}) to (?<merchant>.+?)(?:\\.|$)",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_input": "You have paid RM 12.00 to Shopee. [REDACTED-BALANCE]",
+      "notes": "PLACEHOLDER — replace body_pattern and sample_input with a sanitized real capture.",
+      "sample_expected": {
+        "amount": 12,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "Shopee"
+      }
+    },
+    {
+      "id": "tpl-cimb-1",
+      "package_name": "com.cimb.cimbocto",
+      "app_label": "CIMB Octo MY",
+      "version": 1,
+      "active": true,
+      "title_pattern": null,
+      "body_pattern": "RM\\s*(?<amount>[\\d,]+\\.\\d{2}) debited from Account \\[REDACTED-ACCOUNT\\] on (?<txn_date>\\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2})",
+      "date_format": "dd/MM/yyyy HH:mm",
+      "default_currency": "MYR",
+      "sample_input": "RM 45.00 debited from Account [REDACTED-ACCOUNT] on 15/08/2026 14:30. [REDACTED-BALANCE]",
+      "notes": "PLACEHOLDER — replace body_pattern and sample_input with a sanitized real capture.",
+      "sample_expected": {
+        "amount": 45,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": null
+      }
+    }
+  ]
+}

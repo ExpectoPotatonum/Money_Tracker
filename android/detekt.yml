@@ -1,0 +1,40 @@
+buildUponDefaultConfig: true
+
+complexity:
+  LongMethod:
+    threshold: 40
+  TooManyFunctions:
+    thresholdInFiles: 15
+    thresholdInClasses: 15
+    thresholdInInterfaces: 15
+    thresholdInObjects: 15
+
+style:
+  MagicNumber:
+    active: true
+    ignorePropertyDeclaration: true
+    ignoreLocalVariableDeclaration: false
+    ignoreConstantDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+  ForbiddenComment:
+    active: true
+    values:
+      - "FIXME:"
+    comments:
+      - "TODO:"
+      - "STOPSHIP:"
+
+potential-bugs:
+  UnusedPrivateMember:
+    active: true
+
+naming:
+  FunctionNaming:
+    active: true
+    functionPattern: '[a-z][A-Za-z0-9]*'
+  TopLevelPropertyNaming:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false

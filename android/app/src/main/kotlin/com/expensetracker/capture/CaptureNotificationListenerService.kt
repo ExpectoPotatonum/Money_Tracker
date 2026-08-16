@@ -1,25 +1,24 @@
 package com.expensetracker.capture
 
 import android.app.Notification
-import android.content.Context
-import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
+import dagger.hilt.android.AndroidEntryPoint
 import java.security.MessageDigest
 import java.util.UUID
+import javax.inject.Inject
 
 /**
- * Phase-1 capture only (agents.md §14) — no parsing, no sanitization,
- * no network. Every field maps 1:1 onto a raw_notifications column
- * (agents.md §7); nothing is combined into a single blob, since §8's
- * redaction pass and §9's parsing both match against title/text_body/
- * big_text/sub_text separately.
- *
- * TODO: wire captureDao (Room) in via Hilt once the data layer exists
- * (ARCHITECTURE.md §3 — /android/.../data). saveToRoom() and
- * isRecentDuplicate() are stand-ins until then.
+ * Phase-1 capture only (agents.md §14) — the listener writes to Room and
+ * returns. No parsing, no sanitization, no network on this thread; the
+ * only work past the synchronous write is handing a sync request to
+ * WorkManager (agents.md §6 step 4).
  */
+@AndroidEntryPoint
 class CaptureNotificationListenerService : NotificationListenerService() {
+
+    @Inject lateinit var handler: NotificationCaptureHandler
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val packageName = sbn.packageName
@@ -40,14 +39,15 @@ class CaptureNotificationListenerService : NotificationListenerService() {
         val isGroupSummary = (sbn.notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
 
         // Near-duplicate detection at capture time (agents.md §6) — the
-        // hash is computed and checked before insert, not after.
+        // hash is computed before insert, and the repository refuses the
+        // row if the same hash landed within the dedup window.
         val contentHash = sha256("$packageName|$title|$text|$bigText")
-        if (isRecentDuplicate(contentHash)) return
 
-        val row = RawNotificationDraft(
+        val draft = RawNotificationDraft(
             clientUuid = UUID.randomUUID().toString(),
             deviceId = DeviceIdProvider.get(applicationContext),
             packageName = packageName,
+            appLabel = AppLabelResolver.get(applicationContext, packageName),
             notificationKey = sbn.key,
             title = title,
             textBody = text,
@@ -60,10 +60,20 @@ class CaptureNotificationListenerService : NotificationListenerService() {
             contentHash = contentHash,
         )
 
-        // Room only. Nothing here ever touches the network or Supabase
-        // directly — sync is a separate WorkManager job (agents.md §6
-        // step 4 / §11), never inline in this callback.
-        saveToRoom(row)
+        handler.capture(draft)
+    }
+
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        ListenerState.bound = true
+        Log.i(TAG, "listener connected")
+        SafeForegroundLauncher.start(this, NotificationCaptureService::class.java)
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        ListenerState.bound = false
+        Log.w(TAG, "listener disconnected — requestRebind will be triggered by the health check")
     }
 
     private fun sha256(input: String): String =
@@ -71,29 +81,7 @@ class CaptureNotificationListenerService : NotificationListenerService() {
             .digest(input.toByteArray())
             .joinToString("") { "%02x".format(it) }
 
-    // TODO: captureDao.existsRecentHash(contentHash, withinMillis = 5_000)
-    private fun isRecentDuplicate(contentHash: String): Boolean = false
-
-    // TODO: captureDao.insert(row.toEntity())
-    private fun saveToRoom(row: RawNotificationDraft) { /* TODO */ }
-}
-
-/** Mirrors the raw_notifications columns this service is responsible for. */
-data class RawNotificationDraft(
-    val clientUuid: String,
-    val deviceId: String,
-    val packageName: String,
-    val notificationKey: String?,
-    val title: String?,
-    val textBody: String?,
-    val bigText: String?,
-    val subText: String?,
-    val isGroupSummary: Boolean,
-    val postedAt: Long,
-    val contentHash: String,
-)
-
-object DeviceIdProvider {
-    fun get(context: Context): String =
-        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+    private companion object {
+        const val TAG = "CaptureListener"
+    }
 }

@@ -8,8 +8,8 @@ package com.expensetracker.capture
  * came from the actual device, not assumed from the app's public name.
  *
  * Shopee and Pinduoduo are deliberately excluded — high notification
- * volume relative to actual transactions; recorded manually instead
- * so phase 1's capture stream doesn't get noisy.
+ * volume relative to actual transactions; recorded manually instead so
+ * phase 1's capture stream doesn't get noisy.
  */
 object TargetPackages {
     val ALL: Set<String> = setOf(
