@@ -16,3 +16,8 @@ create or replace function auth.uid() returns uuid
 language sql stable as $$
   select '00000000-0000-0000-0000-000000000000'::uuid;
 $$;
+
+-- The FK on raw_notifications.user_id requires this row to exist.
+insert into auth.users (id)
+values ('00000000-0000-0000-0000-000000000000')
+on conflict do nothing;

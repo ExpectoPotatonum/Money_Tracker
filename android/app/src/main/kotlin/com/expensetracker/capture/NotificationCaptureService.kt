@@ -17,7 +17,8 @@ import com.expensetracker.R
 /**
  * Low-importance silent foreground service (agents.md §10) — the pair to
  * the notification listener that keeps OneUI from killing the capture
- * pipeline. Declared with foregroundServiceType=dataSync (API 34+).
+ * pipeline. Declared with foregroundServiceType=specialUse to avoid the
+ * 6h/24h runtime cap that applies to dataSync on Android 15+ (API 35).
  */
 class NotificationCaptureService : Service() {
 
@@ -33,6 +34,17 @@ class NotificationCaptureService : Service() {
         super.onDestroy()
         // If the listener is still bound, OneUI didn't kill us — we did.
         // Stay dead until the health-check worker or boot receiver wakes us.
+    }
+
+    /**
+     * Required on Android 15+ (API 35) even for specialUse-type FGS —
+     * harmless before the cap applies, mandatory once it does. The
+     * system calls this when the cumulative specialUse cap is hit; we
+     * stop gracefully instead of risking a RemoteServiceException.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w("CaptureService", "FGS timeout (type=$fgsType) — stopping")
+        stopSelf()
     }
 
     private fun startAsForeground() {
@@ -52,7 +64,7 @@ class NotificationCaptureService : Service() {
                 this,
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
