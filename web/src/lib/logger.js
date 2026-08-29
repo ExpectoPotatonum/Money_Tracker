@@ -109,18 +109,6 @@ async function logEvent(entry) {
       rows: base + entry,
     };
     await writeStored(0, next);
-
-    try {
-      const blob = new Blob([next.rows], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = next.name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-    } catch {
-      /* download is a convenience; IndexedDB is the source of truth */
-    }
   } catch (err) {
     // Logger must never throw into the app.
     console.error('logger failure', err);
@@ -174,5 +162,6 @@ export function logApiError(source, error) {
   );
 }
 
-// Export for tests / manual triggering without tree-shaking it out.
-export { logEvent, readStored, storeKey };
+// Exported for tests. The CSV is always a rendering of the IndexedDB store;
+// IndexedDB remains the source of truth. Nothing here is user-visible.
+export { logEvent, readStored };
