@@ -3,8 +3,11 @@ import { getSession, onAuthStateChange, signOut } from './api/auth.js';
 import { renderAuthGate } from './views/authGate.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderReviewInbox } from './views/reviewInbox.js';
+import { installLogger, logApiError } from './lib/logger.js';
 
 const app = document.getElementById('app');
+
+installLogger();
 
 function currentView() {
   return window.location.hash === '#/review' ? 'review' : 'dashboard';
@@ -61,6 +64,7 @@ async function render() {
       await renderDashboard(viewRoot);
     }
   } catch (err) {
+    logApiError('render', err);
     const alert = document.createElement('div');
     alert.className = 'alert alert-danger';
     alert.setAttribute('role', 'alert');

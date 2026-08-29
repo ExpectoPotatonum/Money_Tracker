@@ -1,5 +1,6 @@
 node_modules/
 *.log
+expense-tracker-errors*.csv
 .DS_Store
 test-results/
 playwright-report/
