@@ -343,3 +343,57 @@ Still in scope despite the SMS/email exclusion: cross-app duplicate detection (�
 - `raw_notifications` rows are never deleted, and their text is never mutated after insert — only `parse_status`, `parse_error`, `parser_template_id`, and `linked_transaction_id` change post-insert.
 - No Supabase `service_role` key in the Android app, ever.
 - `onNotificationPosted()` stays fast — no network calls, no remote DB writes, no heavy regex work on that thread.
+- Every `create table` in a migration must be followed by the matching `GRANT` for the `authenticated` role (§17). Tables created via raw migration SQL do **not** get Supabase's automatic grants (those only apply to tables created through the dashboard UI), so a new table with no grants fails with Postgres `42501 permission denied` for every logged-in request — even with correct RLS policies.
+
+## 17. Adding a new table (database checklist)
+
+Supabase authorizes in **two independent layers**; a new table needs both:
+
+1. **GRANT (base privilege)** — decides whether the `authenticated` role may touch the table at all.
+2. **RLS policy** — decides which rows that role may see/change once granted.
+
+Forgetting either produces 403s on every request; the two fail in different ways:
+- **Missing GRANT** → Postgres log: `permission denied for table X`, status `42501`, `auth_user: null`.
+- **Missing / mis-role'd RLS policy** → RLS rejection (row filter), often 403 with a valid user.
+
+### Template for any new table
+
+```sql
+-- 1. Grant base privileges. Reference/lookup tables: SELECT only.
+--    Owner-scoped capture tables: also INSERT/UPDATE/DELETE so the app can
+--    write — safe because the owner_only RLS policy confines rows to auth.uid().
+grant select on my_new_table to authenticated;
+
+-- (if the app writes to it, extend with:)
+grant insert, update, delete on my_new_table to authenticated;
+
+-- 2. Enable RLS and add a policy. Reference tables (no user_id): read for
+--    authenticated, writes stay operator-only. Owner tables: owner_only.
+alter table my_new_table enable row level security;
+
+create policy "owner_only" on my_new_table
+  for all to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+  -- OR, for a shared reference table without user_id:
+  -- create policy "read_authenticated" on my_new_table
+  --   for select to authenticated using (true);
+```
+
+Useful diagnostics (previously run to debug this exact issue):
+
+```sql
+-- Are the base grants in place?
+select grantee, privilege_type, table_name
+from information_schema.role_table_grants
+where table_schema = 'public' and grantee = 'authenticated'
+order by table_name, privilege_type;
+
+-- Are the RLS policies in place, and for which roles?
+select tablename, policyname, roles::text, cmd
+from pg_policies
+where schemaname = 'public'
+order by tablename, policyname;
+```
+
+Put the `GRANT` in the same migration as the `create table`, so the two never drift — and note that Supabase's GitHub connection does not auto-apply migrations to the live project; run each new migration manually in SQL Editor.
