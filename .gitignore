@@ -6,3 +6,9 @@ test-results/
 playwright-report/
 .idea/
 .vscode/
+
+# Transient diagnostic output from the DB-parser bring-up (SQL Editor pastes).
+# The intentional reference scripts (supabase/migrations/2a–2e, 3, 4,
+# DIAGNOSTIC_parser_state.sql) remain committed as reference; this is the
+# regenerated result log, not source.
+supabase/migrations/results.txt

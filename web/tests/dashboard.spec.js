@@ -64,11 +64,27 @@ const TRANSACTIONS = [
 ];
 
 function mockSupabase(page, { heartbeatAgeHours = 30, alerts = [] } = {}) {
-  page.route('**/rest/v1/transactions**', (route) =>
-    route.fulfill({ json: TRANSACTIONS, headers: { 'content-type': 'application/json' } }),
-  );
+  page.route('**/rest/v1/transactions**', (route) => {
+    const method = route.request().method();
+    if (method === 'PATCH' || method === 'DELETE') {
+      return route.fulfill({
+        status: 204,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return route.fulfill({ json: TRANSACTIONS, headers: { 'content-type': 'application/json' } });
+  });
   page.route('**/rest/v1/categories**', (route) =>
     route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
+  );
+  page.route('**/rest/v1/currencies**', (route) =>
+    route.fulfill({
+      json: [
+        { code: 'MYR', symbol: 'RM', position: 10 },
+        { code: 'USD', symbol: '$', position: 40 },
+      ],
+      headers: { 'content-type': 'application/json' },
+    }),
   );
   page.route('**/rest/v1/dashboard_alerts**', (route) =>
     route.fulfill({ json: alerts, headers: { 'content-type': 'application/json' } }),
@@ -123,4 +139,56 @@ test('stale heartbeat raises the tracker-may-be-offline banner', async ({ page }
 test('fresh heartbeat shows no offline banner', async ({ page }) => {
   await openDashboard(page, { heartbeatAgeHours: 1 });
   await expect(page.locator('.alert-warning')).toHaveCount(0);
+});
+
+test('edit-mode toggle reveals editable controls and Save/Delete per row', async ({ page }) => {
+  await openDashboard(page);
+  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(0);
+
+  await page.click('#edit-mode-toggle');
+  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(3);
+});
+
+test('toggling edit mode preserves read-only rendering when off', async ({ page }) => {
+  await openDashboard(page);
+  await page.click('#edit-mode-toggle');
+  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(3);
+  await page.click('#edit-mode-toggle');
+  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(0);
+});
+
+test('clicking Save issues a PATCH for the edited transaction', async ({ page }) => {
+  const patched = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patched.push({ url: req.url(), postData: req.postData() });
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#edit-mode-toggle');
+  const firstRow = page.locator('tbody tr').first();
+  await firstRow.locator('input[type="number"]').fill('99');
+  await firstRow.getByRole('button', { name: 'Save' }).click();
+
+  await expect.poll(() => patched.length).toBe(1);
+  expect(patched[0].url).toContain('transactions');
+  expect(patched[0].postData).toContain('"amount":99');
+});
+
+test('clicking Delete issues a DELETE for that row', async ({ page }) => {
+  let deleted = false;
+  page.on('dialog', (dialog) => dialog.accept());
+  page.on('request', (req) => {
+    if (req.method() === 'DELETE' && req.url().includes('/rest/v1/transactions')) {
+      deleted = true;
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#edit-mode-toggle');
+  await page.locator('tbody tr').first().getByRole('button', { name: 'Delete' }).click();
+  await expect.poll(() => deleted).toBe(true);
 });

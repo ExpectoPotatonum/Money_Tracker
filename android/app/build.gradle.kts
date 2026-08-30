@@ -15,12 +15,12 @@ val supabaseAnonKey: String = (project.findProperty("SUPABASE_ANON_KEY") as? Str
 
 android {
     namespace = "com.expensetracker"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.expensetracker"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -62,7 +62,7 @@ android {
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.compose.bom)
+    implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
@@ -77,6 +77,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.work)
     ksp(libs.hilt.work.compiler)
+    implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.androidx.work.runtime)
 
     implementation(libs.kotlinx.coroutines.android)

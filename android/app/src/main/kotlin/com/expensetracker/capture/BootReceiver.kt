@@ -1,6 +1,7 @@
 package com.expensetracker.capture
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.service.notification.NotificationListenerService
@@ -23,7 +24,9 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             -> {
-                NotificationListenerService.requestRebind(context)
+                NotificationListenerService.requestRebind(
+                    ComponentName(context, CaptureNotificationListenerService::class.java)
+                )
                 SafeForegroundLauncher.start(context, NotificationCaptureService::class.java)
                 syncScheduler.scheduleAll()
             }

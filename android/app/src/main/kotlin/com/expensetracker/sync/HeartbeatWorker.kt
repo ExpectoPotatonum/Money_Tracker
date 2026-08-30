@@ -45,7 +45,7 @@ class HeartbeatWorker @AssistedInject constructor(
         return try {
             api.upsertHeartbeat(row, token)
             Result.success()
-        } catch (e: IOException) {
+        } catch (_: IOException) {
             Result.retry()
         }
     }
@@ -63,7 +63,7 @@ class HeartbeatWorker @AssistedInject constructor(
         fun isListenerAccessGranted(context: Context): Boolean {
             val enabled = Settings.Secure.getString(
                 context.contentResolver,
-                Settings.Secure.ENABLED_NOTIFICATION_LISTENERS,
+                "enabled_notification_listeners",
             ).orEmpty()
             val component = "${context.packageName}/com.expensetracker.capture.CaptureNotificationListenerService"
             return enabled.split(":").contains(component)

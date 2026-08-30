@@ -33,3 +33,8 @@ export function badge(text, className = 'bg-secondary') {
   span.textContent = text;
   return span;
 }
+
+/** Browser-level delete confirmation. Returns true when the user confirms. */
+export function confirmDelete() {
+  return window.confirm('Delete this transaction? This cannot be undone.');
+}

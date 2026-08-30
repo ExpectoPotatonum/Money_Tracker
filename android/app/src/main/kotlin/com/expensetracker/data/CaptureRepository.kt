@@ -1,5 +1,7 @@
 package com.expensetracker.data
 
+import com.expensetracker.capture.RawNotificationDraft
+import com.expensetracker.capture.toEntity
 import javax.inject.Inject
 import javax.inject.Singleton
 

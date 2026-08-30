@@ -1,6 +1,7 @@
 package com.expensetracker.sync
 
 import android.content.Context
+import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -41,6 +42,7 @@ class NotificationSyncWorker @AssistedInject constructor(
             repository.markSynced(rows.map { it.clientUuid })
             Result.success()
         } catch (e: IOException) {
+            Log.e("NotificationSyncWorker", "Sync failed", e)
             repository.markFailed(rows.map { it.clientUuid })
             Result.retry()
         }

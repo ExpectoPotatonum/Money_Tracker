@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.expensetracker.data.CaptureRepository
 import com.expensetracker.sync.AuthStore
+import com.expensetracker.sync.SyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.launch
 class MainViewModel @Inject constructor(
     private val repository: CaptureRepository,
     private val authStore: AuthStore,
+    private val syncScheduler: SyncScheduler,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(UiState())
@@ -25,6 +27,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun refresh() {
+        syncScheduler.requestSync()
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             _state.value = UiState(

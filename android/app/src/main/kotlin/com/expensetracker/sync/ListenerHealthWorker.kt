@@ -1,6 +1,7 @@
 package com.expensetracker.sync
 
 import android.content.Context
+import android.content.ComponentName
 import android.service.notification.NotificationListenerService
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
@@ -25,7 +26,9 @@ class ListenerHealthWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val context = applicationContext
         if (HeartbeatWorker.isListenerAccessGranted(context)) {
-            NotificationListenerService.requestRebind(context)
+            NotificationListenerService.requestRebind(
+                ComponentName(context, com.expensetracker.capture.CaptureNotificationListenerService::class.java)
+            )
             SafeForegroundLauncher.start(context, NotificationCaptureService::class.java)
         }
         return Result.success()

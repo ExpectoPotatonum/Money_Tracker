@@ -58,7 +58,7 @@ agent.md              this file
 | Layer | Choice |
 |---|---|
 | Android | Kotlin, `NotificationListenerService`, Room, WorkManager, a foreground service |
-| Backend | Supabase — Postgres, Auth, Row Level Security, Edge Functions, Database Webhooks |
+| Backend | Supabase — Postgres, Auth, Row Level Security. Parsing runs **inside Postgres** (a trigger + PL/pgSQL), because Edge Functions and Database Webhooks are paid-tier features on the hosted Free project (§9/§15). The original Deno `parse-notification` function is kept in the repo as the fallback for a paid tier. |
 | Web | Static site on Netlify, Bootstrap, Supabase JS client, queried directly from the browser under RLS |
 
 ## 5. Core design principle
@@ -68,7 +68,7 @@ agent.md              this file
 Concretely:
 
 - **Unconditional, durable capture** — `raw_notifications` rows are written for every matching notification, parseable or not, and are never deleted.
-- **Decoupled, re-runnable parsing** — parsing lives server-side, in an Edge Function driven by `parser_templates`, not in the Android app. Fixing a broken regex is a data change, not an app release, and every historical row can be re-parsed once the fix lands.
+- **Decoupled, re-runnable parsing** — parsing lives server-side, driven by `parser_templates`, not in the Android app. On the Free tier this is a **Postgres `AFTER INSERT` trigger + a PL/pgSQL function** (`parse_raw_notification`, migrations 202608180002–004); the paid-tier Deno `parse-notification` Edge Function + Database Webhook remains in the repo as the fallback if the project ever upgrades. In every case: fixing a broken regex is a data change, not an app release, and every historical row can be re-parsed once the fix lands (run `select backfill_parse_pending();`).
 - **Queued, idempotent sync** — every captured row gets a `client_uuid` generated on-device at capture time; syncing is an upsert on that key, so a retry after a partial failure can't create a duplicate.
 
 Everything else in this file follows from these three sentences.
@@ -79,7 +79,7 @@ Everything else in this file follows from these three sentences.
 2. `onNotificationPosted()` fires. This runs on the system's binder thread — it should do nothing beyond a fast, synchronous write to the local Room DB. No network, no regex, no blocking work here.
 3. The row is sanitized (§8) before it becomes eligible for sync. The full original text stays in Room, on-device, and never leaves.
 4. A WorkManager job batches pending rows and upserts them into Supabase's `raw_notifications` (sanitized text only), keyed on `client_uuid`.
-5. A Database Webhook on insert triggers the `parse-notification` Edge Function, which:
+5. The insert triggers `parse_raw_notification` (an `AFTER INSERT` trigger + PL/pgSQL function on the Free tier; the paid fallback is the `parse-notification` Edge Function), which:
    - loads the active `parser_templates` row for that `package_name`,
    - runs `title_pattern` / `body_pattern` against the sanitized text to extract amount, currency, `merchant_raw`, direction, and transaction date,
    - falls back to a loose per-currency regex and `confidence = 'low'` if no strict template matches,
@@ -254,7 +254,8 @@ This satisfies the letter of the privacy constraint — Supabase never receives 
 
 ## 9. Parsing strategy
 
-- Parsing happens **server-side**, in the Edge Function, never on-device. A regex fix is a redeploy of the function and a re-run over history, not an app release.
+- Parsing happens **server-side, never on-device.** On the Free tier it is a **Postgres trigger + PL/pgSQL** (`parse_raw_notification`, migrations 202608180002–004); the paid-tier Deno `parse-notification` Edge Function + webhook (in `supabase/functions/`) is the fallback if the project upgrades. Either way a regex fix is a data change (a new `parser_templates` row + `select backfill_parse_pending();`), not an app release.
+- **Postgres regex notes** (matter for every `body_pattern`): Postgres ARE supports `\s \d \w` and `\.`, but **not** lazy quantifiers (`*?`, `+?`), `\b`, lookahead, or `\d{n}` inside... (use `[0-9]{1,2}`). Use **greedy** matching with explicit anchors, and because `regexp_match` returns a positional array, each rule records a `field_map` JSON mapping a field to its 1-based capture-group index (`{"amount":1,"merchant":2,...}`). Fields may be any subset of `amount, currency, merchant, txn_date, direction`.
 - `parse_status`: `pending → success`, or `pending → failed / needs_review / ignored`.
   - `failed` — nothing matched at all; unrecognized or reformatted notification.
   - `needs_review` — the loose fallback matched, not the strict template; low confidence.
@@ -330,11 +331,17 @@ Still in scope despite the SMS/email exclusion: cross-app duplicate detection (�
 - Sanitization stays generic/on-device with parsing server-side (§8) — confirmed as the lower-memory, lower-battery option over moving parsing on-device.
 - FX conversion for the MYR dashboard total uses a live/cached API, not manual entry or a static table.
 - Account and card numbers are redacted on-device alongside OTPs and balances (§8).
+- **Parsing runs inside Postgres (trigger + PL/pgSQL), not an Edge Function.** Edge Functions and Database Webhooks are paid-tier features on the hosted Free project, so the originally-planned `parse-notification` Edge Function + webhook was shelved as the fallback for a paid tier; the active live parser is `parse_raw_notification` (migrations 202608180002–004). See REPARSING.md.
+- **FX provider: Frankfurter** (`utils/fx.js`, `https://api.frankfurter.dev/v2`) — fetched once per pair and cached in memory for the page load; returns `null` (never throws) so an unavailable rate degrades to showing the original amount (ADR 0001). Live hosts are in `web/ARCHITECTURE.md`.
+- **Manual edit/delete mode** on the dashboard (web) — the owner corrects anything parsing gets wrong (e.g. an e-wallet and its underlying bank card both notify the same real transfer; no automated cross-app dedup — one is deleted by hand in edit mode instead). Inline per-cell editing behind an **Edit mode** toggle: date (MYT `datetime-local`), merchant display + raw, category dropdown, amount + currency + direction, and a **comment/notes** field. Per-row **Save** (PATCH) and **Delete** (DELETE, gated behind edit mode). `authenticated` already has UPDATE/DELETE on `transactions` under the owner_only RLS policy (migration 202608180001), so this is web-only, no new grant. Dates render pinned to `Asia/Kuala_Lumpur`.
+- **`status` is not user-editable.** The dashboard previously exposed a status dropdown (confirmed/needs_review/duplicate/ignored) in edit mode; the owner removed it as useless to them. `status` remains a DB column (the parse layer still writes it), it's just no longer surfaced as an edit control.
+- **Currencies are a DB reference table** (`currencies`, migration 202608300003) with code/symbol/position, plus a `currencies` GRANT+RLS read policy. The web app reads it at runtime (`api/currencies.js` → `setCurrencySymbols`/`currencyOptions` in `utils/format.js`) to build the edit-mode dropdown and display symbols, with built-in fallbacks so a missing table never breaks formatting. **Adding a currency is one `INSERT`, no app release.** v1 set: MYR, CNY, TWD, USD, SGD.
+- **Credit-side categories** added (migration 202608300001): Salary, Transfers, Refunds, Cashback & Rewards, Investments/Interest, Gifts. Credit merchant rules seeded (migration 202608300002) for recognizable incoming senders (salary/refund/cashback/rebate/interest/dividend/gift). A P2P receive's merchant is the *sender's person name* (e.g. TnG "HOO JET YUNG"), which no generic rule matches — set such rows by hand in edit mode.
 
 **Still open:**
-- **Which FX API**, specifically, and how it's cached — a free-tier provider (e.g. exchangerate.host, Frankfurter) fetched once and cached client-side per session is a reasonable default; pick one and confirm it has the currencies you need (MYR, USD, CNY, and whatever Wise/Alipay add).
 - **Redaction regex library** (§8) — OTP, balance, *and* now account/card patterns — is a proposed design, not yet validated against real notification samples. Treat phase 1 of the rollout (§14) as the point to validate all three, not just the parsing templates.
 - **Regression-test harness** for `parser_templates` (§9) — currently a manual "replay against `sample_input`" step; worth scripting once there's more than a couple of templates.
+- **More parser templates / more apps** — only TnG + CIMB are live. Adding banks/wallets needs real captured samples first (§14 rollout), which is the next real-world gap.
 
 ## 16. Conventions
 

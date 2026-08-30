@@ -1,0 +1,173 @@
+-- 2c: main parse function (run this as its own SQL statement)
+-- If Step 2 (the full infra file) failed, re-create just the core function here.
+-- Depends on 2a (infer_direction) and 2b (loose_parse_amount) existing already.
+
+create or replace function parse_raw_notification(rid uuid)
+returns void
+language plpgsql
+as $$
+declare
+  r record;
+  t record;
+  m text[];
+  v_amount text;
+  v_currency text;
+  v_merchant text;
+  v_txn_date_g text;
+  v_dir text;
+  v_parsed jsonb;
+  v_status text;
+  v_confidence text;
+  v_txn_status text;
+  v_txn_date timestamptz;
+  v_merchant_display text;
+  v_category_id uuid;
+  v_linked uuid;
+  v_body text;
+begin
+  select * into r from raw_notifications where id = rid;
+  if r is null then
+    return;
+  end if;
+  if r.parse_status is distinct from 'pending' then
+    return;
+  end if;
+
+  v_body := coalesce(r.big_text, r.text_body, r.sub_text, '');
+  if v_body = '' then
+    update raw_notifications set parse_status = 'failed', parse_error = 'no body text'
+      where id = rid;
+    return;
+  end if;
+
+  select * into t
+    from parser_templates
+    where package_name = r.package_name and active
+    order by version desc
+    limit 1;
+
+  v_parsed := null;
+
+  if t.id is not null then
+    if (t.title_pattern is null or t.title_pattern = ''
+        or (r.title is not null and r.title ~* t.title_pattern))
+    then
+      m := regexp_match(v_body, t.body_pattern, 'i');
+      if m is not null then
+        v_amount := m[(t.field_map ->> 'amount')::int];
+        v_merchant := m[(t.field_map ->> 'merchant')::int];
+        v_txn_date_g := m[(t.field_map ->> 'txn_date')::int];
+        v_currency := coalesce(m[(t.field_map ->> 'currency')::int],
+                               t.default_currency);
+        v_dir := infer_direction(
+          coalesce(m[(t.field_map ->> 'direction')::int], v_body));
+        if v_amount is not null then
+          v_parsed := jsonb_build_object(
+            'amount', v_amount,
+            'currency', upper(v_currency),
+            'merchant_raw', v_merchant,
+            'txn_date', v_txn_date_g,
+            'direction', v_dir,
+            'matched_template', true);
+        end if;
+      end if;
+    end if;
+  end if;
+
+  if v_parsed is null or (v_parsed ->> 'amount') is null then
+    v_parsed := loose_parse_amount(v_body);
+    if v_parsed is not null then
+      v_parsed := v_parsed || '{"matched_template":false}'::jsonb;
+    end if;
+  end if;
+
+  if v_parsed is null then
+    update raw_notifications
+      set parse_status = 'failed',
+          parse_error = 'no extractable amount',
+          parser_template_id = t.id
+      where id = rid;
+    return;
+  end if;
+
+  v_status := case
+    when (v_parsed ->> 'matched_template')::boolean then 'success'
+    else 'needs_review'
+  end;
+  v_confidence := case
+    when (v_parsed ->> 'matched_template')::boolean then 'high'
+    else 'low'
+  end;
+  v_txn_status := case
+    when (v_parsed ->> 'matched_template')::boolean then 'confirmed'
+    else 'needs_review'
+  end;
+
+  v_txn_date := r.posted_at;
+  if (v_parsed ->> 'txn_date') is not null and t.date_format is not null then
+    begin
+      v_txn_date := to_timestamp(v_parsed ->> 'txn_date', t.date_format);
+    exception when others then
+      v_txn_date := r.posted_at;
+    end;
+  end if;
+
+  if (v_parsed ->> 'merchant_raw') is not null then
+    select
+      coalesce(mr.normalized_name, (v_parsed ->> 'merchant_raw')),
+      mr.category_id
+    into v_merchant_display, v_category_id
+    from merchant_rules mr
+    where (
+      case mr.match_type
+        when 'exact' then lower((v_parsed ->> 'merchant_raw')) = lower(mr.match_pattern)
+        when 'contains' then lower((v_parsed ->> 'merchant_raw')) like '%' || lower(mr.match_pattern) || '%'
+        when 'regex' then (v_parsed ->> 'merchant_raw') ~* mr.match_pattern
+      end
+    )
+    order by mr.priority desc
+    limit 1;
+  end if;
+  if v_merchant_display is null then
+    v_merchant_display := v_parsed ->> 'merchant_raw';
+  end if;
+
+  insert into transactions (
+    user_id, raw_notification_id, source_package, source_app_label,
+    amount, currency, direction,
+    merchant_raw, merchant_display, category_id,
+    transaction_date, notification_posted_at,
+    parser_template_id, confidence, status
+  ) values (
+    r.user_id, r.id, r.package_name, r.app_label,
+    replace((v_parsed ->> 'amount'), ',', '')::numeric,
+    coalesce((v_parsed ->> 'currency'), t.default_currency, 'MYR'),
+    v_parsed ->> 'direction',
+    v_parsed ->> 'merchant_raw',
+    v_merchant_display,
+    v_category_id,
+    v_txn_date, r.posted_at,
+    t.id, v_confidence, v_txn_status
+  )
+  on conflict (raw_notification_id) do update
+    set amount = excluded.amount,
+        currency = excluded.currency,
+        direction = excluded.direction,
+        merchant_raw = excluded.merchant_raw,
+        merchant_display = excluded.merchant_display,
+        category_id = excluded.category_id,
+        transaction_date = excluded.transaction_date,
+        confidence = excluded.confidence,
+        status = excluded.status,
+        parser_template_id = excluded.parser_template_id,
+        updated_at = now()
+  returning id into v_linked;
+
+  update raw_notifications
+    set parse_status = v_status,
+        parser_template_id = t.id,
+        linked_transaction_id = v_linked,
+        parse_error = null
+    where id = rid;
+end;
+$$;

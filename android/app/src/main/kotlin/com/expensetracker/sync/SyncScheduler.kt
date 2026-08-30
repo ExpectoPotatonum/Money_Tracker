@@ -6,7 +6,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaWorkPolicy
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -23,17 +23,26 @@ import javax.inject.Singleton
 class SyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    private val workManager = WorkManager.getInstance(context)
+    private val workManager get() = WorkManager.getInstance(context)
 
     fun requestSync() {
-        val request = OneTimeWorkRequestBuilder<NotificationSyncWorker>()
+        val syncRequest = OneTimeWorkRequestBuilder<NotificationSyncWorker>()
             .setConstraints(networkConnected())
-            .setExpedited(OutOfQuotaWorkPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build()
         workManager.enqueueUniqueWork(
             NotificationSyncWorker.WORK_NAME_ONE_OFF,
             ExistingWorkPolicy.KEEP,
-            request,
+            syncRequest,
+        )
+
+        val heartbeatRequest = OneTimeWorkRequestBuilder<HeartbeatWorker>()
+            .setConstraints(networkConnected())
+            .build()
+        workManager.enqueueUniqueWork(
+            "heartbeat-one-off",
+            ExistingWorkPolicy.REPLACE,
+            heartbeatRequest,
         )
     }
 
