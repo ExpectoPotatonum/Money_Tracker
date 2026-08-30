@@ -11,6 +11,7 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 ### Capture → sync (Android, working)
 - `NotificationListenerService` writes to Room synchronously on the binder thread; `Redactor` sanitizes at sync time (OTP/balance/account); WorkManager batches upserts keyed on `client_uuid`.
 - **Verified on-device:** 2 real `raw_notifications` (TnG + CIMB) synced to Supabase; `client_uuid` matches the local Room rows (idempotent upsert); `device_heartbeat` writing.
+- **Auth 401/403 fix (ADR 0002):** access tokens are short-lived JWTs; the app now caches the full session (access token + `user_id`), sends `user_id` explicitly in payloads for RLS `owner_only`, maps 401/403 to an `UnauthorizedException` that clears the stale token so the next worker run re-authenticates (no more permanent retry loop), and logs full Supabase error bodies. **Verified live:** notifications syncing (`Unsynced rows: 0`), heartbeat success (`Last heartbeat: 2026-08-30 21:59:01`), auth self-healing on token expiry.
 - Earlier root-cause: a stale APK dropped the Hilt worker wiring → WorkManager reflection fallback (`NoSuchMethodException`). Fresh rebuild+reinstall (from Android Studio) fixed it; source wiring was correct.
 
 ### Parsing (free-tier Postgres trigger + PL/pgSQL — LIVE)

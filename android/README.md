@@ -28,6 +28,19 @@ Without them the app builds with placeholder values and capture still works loca
 
 Supabase sign-in credentials (email/password) are entered in the in-app Settings tab; they're stored in plain SharedPreferences for v1's single-user scope.
 
+### Auth & sync self-healing
+
+Access tokens are short-lived JWTs (~1h), so the app caches a full session and re-authenticates on demand rather than trusting a token forever:
+
+- `AuthStore` caches the **access token and `user_id`** captured at sign-in. A sync/heartbeat worker treats the session as valid only when **both** are present; otherwise it signs in with the stored credentials and re-caches them.
+- Every upsert payload (notifications and heartbeat) sends `user_id` explicitly — required by the RLS `owner_only` policy (`auth.uid() = user_id`).
+- Any HTTP **401 or 403** is surfaced as an `UnauthorizedException`, which the workers catch by **clearing the stale token** and retrying — the next run performs a fresh sign-in instead of looping on a dead token forever.
+- `SupabaseApi` logs the **full Supabase response body** on each failure, so an auth problem versus an RLS/grant problem (e.g. `permission denied for table X`) is distinguishable in Logcat.
+- The status screen shows **"Last heartbeat"** as a live check that auth, networking, and DB permissions are all working.
+- Building without real `SUPABASE_URL` / `SUPABASE_ANON_KEY` prints a placeholder warning at startup rather than failing with opaque 401s.
+
+See `docs/adr/0002-auth-session-lifecycle.md` for the full decision.
+
 ## One-time device setup (OneUI — agents.md §10)
 
 1. Grant notification access when prompted.
