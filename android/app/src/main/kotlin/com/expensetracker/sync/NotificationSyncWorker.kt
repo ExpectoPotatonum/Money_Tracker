@@ -31,16 +31,33 @@ class NotificationSyncWorker @AssistedInject constructor(
         val rows = repository.pendingForSync(CaptureRepository.SYNC_BATCH_SIZE)
         if (rows.isEmpty()) return Result.success()
 
-        val token = runCatching { authStore.accessToken ?: signInAndCache() }.getOrNull()
-        if (token == null) return Result.retry()
+        val token = try {
+            val cachedToken = authStore.accessToken
+            if (cachedToken != null && authStore.userId != null) {
+                cachedToken
+            } else {
+                signInAndCache()
+            }
+        } catch (e: SupabaseApi.UnauthorizedException) {
+            Log.e("NotificationSyncWorker", "Sync auth failed: check credentials", e)
+            return Result.failure()
+        } catch (e: IOException) {
+            Log.e("NotificationSyncWorker", "Sync auth failed: retryable", e)
+            return Result.retry()
+        }
 
         val payload = JSONArray()
-        rows.forEach { payload.put(PayloadBuilder.toPayload(it)) }
+        val userId = authStore.userId
+        rows.forEach { payload.put(PayloadBuilder.toPayload(it, userId)) }
 
         return try {
             api.upsertRawNotifications(payload, token)
             repository.markSynced(rows.map { it.clientUuid })
             Result.success()
+        } catch (e: SupabaseApi.UnauthorizedException) {
+            Log.e("NotificationSyncWorker", "Sync failed: unauthorized", e)
+            authStore.accessToken = null
+            Result.retry()
         } catch (e: IOException) {
             Log.e("NotificationSyncWorker", "Sync failed", e)
             repository.markFailed(rows.map { it.clientUuid })
@@ -52,9 +69,10 @@ class NotificationSyncWorker @AssistedInject constructor(
         val email = authStore.email
         val password = authStore.password
         if (email.isBlank() || password.isBlank()) throw IOException("no credentials configured")
-        val token = api.signIn(email, password)
-        authStore.accessToken = token
-        return token
+        val response = api.signIn(email, password)
+        authStore.accessToken = response.accessToken
+        authStore.userId = response.userId
+        return response.accessToken
     }
 
     companion object {

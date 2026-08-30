@@ -32,11 +32,21 @@ class AuthStore @Inject constructor(
         get() = prefs.getString(KEY_ACCESS_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_ACCESS_TOKEN, value).apply()
 
+    var userId: String?
+        get() = prefs.getString(KEY_USER_ID, null)
+        set(value) = prefs.edit().putString(KEY_USER_ID, value).apply()
+
+    var lastHeartbeatAt: Long
+        get() = prefs.getLong(KEY_LAST_HEARTBEAT_AT, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_HEARTBEAT_AT, value).apply()
+
     fun hasCredentials(): Boolean = email.isNotBlank() && password.isNotBlank()
 
     private companion object {
         const val KEY_EMAIL = "email"
         const val KEY_PASSWORD = "password"
         const val KEY_ACCESS_TOKEN = "access_token"
+        const val KEY_USER_ID = "user_id"
+        const val KEY_LAST_HEARTBEAT_AT = "last_heartbeat_at"
     }
 }

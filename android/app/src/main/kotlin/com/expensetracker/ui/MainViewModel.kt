@@ -33,6 +33,7 @@ class MainViewModel @Inject constructor(
             _state.value = UiState(
                 lastCapturedAt = repository.lastCapturedAt(),
                 unsyncedCount = repository.countUnsynced(),
+                lastHeartbeatAt = authStore.lastHeartbeatAt,
                 syncQueryMillis = now,
             )
         }
@@ -41,6 +42,8 @@ class MainViewModel @Inject constructor(
     fun saveCredentials(email: String, password: String) {
         authStore.email = email
         authStore.password = password
+        authStore.accessToken = null
+        authStore.userId = null
         _state.value = _state.value.copy(credentialsSaved = true)
     }
 
@@ -51,6 +54,7 @@ class MainViewModel @Inject constructor(
     data class UiState(
         val lastCapturedAt: Long? = null,
         val unsyncedCount: Int = 0,
+        val lastHeartbeatAt: Long = 0,
         val syncQueryMillis: Long = 0,
         val credentialsSaved: Boolean = false,
     )

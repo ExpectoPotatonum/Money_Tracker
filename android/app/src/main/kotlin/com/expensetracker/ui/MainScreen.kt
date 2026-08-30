@@ -78,6 +78,10 @@ private fun StatusTab(state: MainViewModel.UiState, viewModel: MainViewModel) {
             label = string(R.string.status_last_captured),
             value = state.lastCapturedAt?.let(::formatTimestamp) ?: string(R.string.status_never_captured),
         )
+        StatusRow(
+            label = string(R.string.status_heartbeat),
+            value = if (state.lastHeartbeatAt > 0) formatTimestamp(state.lastHeartbeatAt) else "never",
+        )
         StatusRow(label = string(R.string.status_unsynced_count), value = state.unsyncedCount.toString())
         Spacer(modifier = Modifier.height(16.dp))
         Button(onClick = { viewModel.refresh() }) { Text(text = "Refresh") }

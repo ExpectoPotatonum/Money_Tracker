@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -30,12 +31,25 @@ class HeartbeatWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        val token = runCatching { authStore.accessToken ?: signIn() }.getOrNull()
-        if (token == null) return Result.retry()
+        val token = try {
+            val cachedToken = authStore.accessToken
+            if (cachedToken != null && authStore.userId != null) {
+                cachedToken
+            } else {
+                signIn()
+            }
+        } catch (e: SupabaseApi.UnauthorizedException) {
+            Log.e("HeartbeatWorker", "Heartbeat auth failed: check credentials", e)
+            return Result.failure()
+        } catch (e: IOException) {
+            Log.e("HeartbeatWorker", "Heartbeat auth failed: retryable", e)
+            return Result.retry()
+        }
 
         val context = applicationContext
         val row = JSONObject()
             .put("device_id", DeviceIdProvider.get(context))
+            .put("user_id", authStore.userId ?: JSONObject.NULL)
             .put("last_seen_at", SupabaseApi.iso8601(System.currentTimeMillis()))
             .put("listener_connected", ListenerState.bound)
             .put("notification_access_granted", isListenerAccessGranted(context))
@@ -44,8 +58,14 @@ class HeartbeatWorker @AssistedInject constructor(
 
         return try {
             api.upsertHeartbeat(row, token)
+            authStore.lastHeartbeatAt = System.currentTimeMillis()
             Result.success()
-        } catch (_: IOException) {
+        } catch (e: SupabaseApi.UnauthorizedException) {
+            Log.e("HeartbeatWorker", "Heartbeat sync failed: unauthorized", e)
+            authStore.accessToken = null
+            Result.retry()
+        } catch (e: IOException) {
+            Log.e("HeartbeatWorker", "Heartbeat sync failed", e)
             Result.retry()
         }
     }
@@ -54,7 +74,10 @@ class HeartbeatWorker @AssistedInject constructor(
         val email = authStore.email
         val password = authStore.password
         if (email.isBlank() || password.isBlank()) throw IOException("no credentials configured")
-        return api.signIn(email, password).also { authStore.accessToken = it }
+        val response = api.signIn(email, password)
+        authStore.accessToken = response.accessToken
+        authStore.userId = response.userId
+        return response.accessToken
     }
 
     companion object {

@@ -30,7 +30,7 @@ object PayloadBuilder {
         return RedactedEntity(entity, title, textBody, bigText, subText, applied)
     }
 
-    fun toPayload(entity: RawNotificationEntity): JSONObject {
+    fun toPayload(entity: RawNotificationEntity, userId: String? = null): JSONObject {
         val r = redactEntity(entity)
         val applied = JSONArray()
         RedactionType.entries
@@ -39,6 +39,7 @@ object PayloadBuilder {
 
         return JSONObject()
             .put("client_uuid", r.entity.clientUuid)
+            .put("user_id", userId ?: JSONObject.NULL)
             .put("device_id", r.entity.deviceId)
             .put("package_name", r.entity.packageName)
             .put("app_label", r.entity.appLabel ?: JSONObject.NULL)

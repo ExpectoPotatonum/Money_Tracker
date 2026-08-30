@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
@@ -27,7 +28,13 @@ class SupabaseApi @Inject constructor(
     private val baseUrl: String = BuildConfig.SUPABASE_URL.trimEnd('/')
     private val anonKey: String = BuildConfig.SUPABASE_ANON_KEY
 
-    suspend fun signIn(email: String, password: String): String = withContext(Dispatchers.IO) {
+    init {
+        if (baseUrl.contains("placeholder") || anonKey.contains("placeholder")) {
+            Log.w("SupabaseApi", "Running with placeholder SUPABASE_URL or SUPABASE_ANON_KEY. Sync will fail.")
+        }
+    }
+
+    suspend fun signIn(email: String, password: String): SignInResponse = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("email", email)
             .put("password", password)
@@ -39,11 +46,23 @@ class SupabaseApi @Inject constructor(
             .header(HEADER_CONTENT_TYPE, JSON_MEDIA_TYPE.toString())
             .build()
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("auth failed: HTTP ${response.code}")
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string()
+                Log.e("SupabaseApi", "Sign in failed: HTTP ${response.code} - $errorBody")
+                if ((response.code == 401) || (response.code == 403)) {
+                    throw UnauthorizedException("Auth failed: HTTP ${response.code} - $errorBody")
+                }
+                throw IOException("auth failed: HTTP ${response.code} - $errorBody")
+            }
             val json = JSONObject(response.body?.string().orEmpty())
-            json.getString("access_token")
+            SignInResponse(
+                accessToken = json.getString("access_token"),
+                userId = json.getJSONObject("user").getString("id"),
+            )
         }
     }
+
+    data class SignInResponse(val accessToken: String, val userId: String)
 
     suspend fun upsertRawNotifications(rows: JSONArray, accessToken: String) {
         postUpsert("/rest/v1/raw_notifications", rows, "client_uuid", accessToken)
@@ -64,10 +83,19 @@ class SupabaseApi @Inject constructor(
                 .header(HEADER_PREFER, "resolution=merge-duplicates,return=minimal")
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("upsert failed: HTTP ${response.code}")
+                if (!response.isSuccessful) {
+                    val errorBody = response.body?.string()
+                    Log.e("SupabaseApi", "Request failed: HTTP ${response.code} - $errorBody")
+                    if ((response.code == 401) || (response.code == 403)) {
+                        throw UnauthorizedException("HTTP ${response.code}: $errorBody")
+                    }
+                    throw IOException("upsert failed: HTTP ${response.code} - $errorBody")
+                }
             }
         }
     }
+
+    class UnauthorizedException(message: String) : IOException(message)
 
     companion object {
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
