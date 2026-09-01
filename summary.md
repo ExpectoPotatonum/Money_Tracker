@@ -1,6 +1,6 @@
 # Project Summary — Expense Tracker
 
-> Status as of 2026-08-30. What's built, what's verified live, and what comes next. Governing docs: `AGENTS.md` (what/why) and `ARCHITECTURE.md` (how) + `REPARSING.md` (parse re-run).
+> Status as of 2026-09-01. What's built, what's verified live, and what comes next. Governing docs: `AGENTS.md` (what/why) and `ARCHITECTURE.md` (how) + `REPARSING.md` (parse re-run).
 
 ## Goal
 
@@ -15,9 +15,17 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 - Earlier root-cause: a stale APK dropped the Hilt worker wiring → WorkManager reflection fallback (`NoSuchMethodException`). Fresh rebuild+reinstall (from Android Studio) fixed it; source wiring was correct.
 
 ### Parsing (free-tier Postgres trigger + PL/pgSQL — LIVE)
-- Edge Functions/webhooks are paid-tier, so parsing moved into Postgres: `parse_raw_notification()` + `AFTER INSERT` trigger + `backfill_parse_pending()` (migrations `202608180002`–`004`). The Deno `parse-notification` Edge Function is kept as the paid-tier fallback.
+- Edge Functions/webhooks are paid-tier, so parsing moved into Postgres: `parse_raw_notification()` + `AFTER INSERT` trigger + `backfill_resync()` (migrations `202608180002`–`004`, extended `202609010001`/`005`). The Deno `parse-notification` Edge Function is kept as the paid-tier fallback.
 - Postgres ARE caveats documented in `REPARSING.md` (no lazy quantifiers / `\b` / lookahead; `field_map` maps named fields to positional capture-group indices).
 - **Verified live:** backfilled the 2 real rows → TNG credit (`HOO JET YUNG`, RM 1.00) and CIMB debit (`TnG eWallet`, RM 1.00), both `parse_status='success'`, `confidence=high`. Merchant rule `touch n go`→`TnG eWallet` works.
+
+### TnG outbound + Samsung merchant/category fix (migrations `202609010001`–`005`, applied live)
+- `parse_raw_notification` now tries **every active template** per package (highest `version` first), not just `version desc limit 1` — one app (TnG) can have many format rows (v1 receive, v2 paid…to, v3 paid…at, v4 successfully transferred, v5 …: RM X deducted, v6 RM X…transferred). Installed new outbound TnG templates + a MUJI buying template.
+- **`reject_pattern`** (202609010005) marks marketing/reward bodies (TnG `points|cashback|voucher|reward|earned|redeem|balance|reload|scan & pay`) as `ignored` before parsing — stops reward pushes with decimal amounts from becoming phantom `needs_review` rows. Verified 0 real TnG transactions rejected.
+- **`source_suffix_title`** (202609010002) renders the Source column as `<app> - <title>`, so Samsung Wallet debits show "Samsung Wallet - HLB Debit Card" (the notification title is the card name).
+- **Direction fix:** bare "transferred" is **not** credit — only "transferred … to you" is (202609010005); "transferred RM X to <name>" is a real debit.
+- **`failed_parse_spikes` view** (202609010004) counts `needs_review` too, so a new format that still carries a decimal amount triggers the spike alert instead of hiding silently.
+- **Verified live after re-parse:** PINDUODUO→Shopping, FP-AEON→AEON→Shopping, MUJI→Shopping, KEDAI KOPI 66 & LEMON KOAY TEOW THNG→Food & Dining, Berjaya Starbucks→Starbucks→Food & Dining, HOO JET YUNG→Finance & Transfer — all `high`/`confirmed`. Samsung row still needing a targeted re-run so its Source reads "Samsung Wallet - HLB Debit Card" (see §What's next).
 
 ### Web dashboard (working on localhost)
 - Auth gate, transaction table (debits "Spending" + credits "Money in"), MYR FX conversion (Frankfurter) at display time, review inbox, heartbeat offline banner, alerts.
@@ -31,27 +39,32 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 - FX provider: **Frankfurter** (ADR 0001); unavailable rates degrade to the original amount.
 - Parsing lives in Postgres on the free tier, not an Edge Function.
 
-## Supabase migrations to run (SQL Editor) — not yet applied live
-- `202608180002_db_parser_field_map.sql`, `202608180003_db_parser_infra.sql`, `202608180004_seed_templates.sql` — **already applied live** (parsing verified).
+## Supabase migrations to run (SQL Editor) — applied live
+- `202608180002_db_parser_field_map.sql`, `202608180003_db_parser_infra.sql`, `202608180004_seed_templates.sql` — **applied live** (parsing verified).
 - `202608300001_seed_credit_categories.sql`, `202608300002_seed_credit_merchant_rules.sql`, `202608300003_seed_currencies.sql` — **applied live** (user ran them).
+- `202609010001_outbound_templates_and_resync.sql`, `202609010002_samsung_source_label.sql`, `202609010003_tng_transferred_leading_amount.sql`, `202609010004_parse_spike_includes_needs_review.sql`, `202609010005_reject_marketing.sql` — **applied live** (user ran them).
 
 ## Verification status
 | Subsystem | Result |
 |---|---|
 | Capture → sync → parse → display | ✅ verified live (TnG + CIMB) |
+| TnG outbound + Samsung merchant/category parse | ✅ re-parsed, merchants/categories resolved — except one Samsung row still showing source "Samsung Wallet" pending the targeted re-run in §What's next |
 | Web edit/delete + currencies + comment field | ✅ working on localhost:5173 |
 | Web ESLint + build | ✅ clean |
 | Web Playwright e2e | ✅ (7 tests incl. edit-mode/delete; run via `npm run test:e2e` on the user's machine — the shell here couldn't run Playwright) |
 | Android | ✅ built + installed by the user; capture verified |
 
 ## What's next
-1. **More parser templates / more apps** — only TnG + CIMB are live. Adding banks/wallets needs **real captured samples first** (AGENTS.md §14 rollout) — the next real-world gap.
-2. **Validate the redaction regex library** (§8) against real samples — still an open TODO.
-3. **Regression-test harness for `parser_templates`** (§9) — script the "replay vs `sample_input`" step once there are more templates.
-4. **Later scope (deferred by design)** — budgets, recurring detection, CSV export, PWA install, chart library.
+1. **Targeted Samsung re-parse** so Source renders "Samsung Wallet - HLB Debit Card": `update raw_notifications set parse_status='pending' where linked_transaction_id='0316042e-2c2e-4a81-90cf-974069c267f2'; select backfill_resync();` (the row is now `success`, so `backfill_resync()` won't pick it up automatically).
+2. **More parser templates / more apps** — only TnG + CIMB are live. Adding banks/wallets needs **real captured samples first** (AGENTS.md §14 rollout) — the next real-world gap.
+3. **Resolve the cashback question** — whether to drop the `cashback` token from the TnG `reject_pattern` so genuine cashback *refunds* still parse as credits (currently cashback pushes are `ignored`).
+4. **Validate the redaction regex library** (§8) against real samples — still an open TODO.
+5. **Regression-test harness for `parser_templates`** (§9) — script the "replay vs `sample_input`" step once there are more templates.
+6. **Later scope (deferred by design)** — budgets, recurring detection, CSV export, PWA install, chart library.
 
 ## Conventions that gate future work
 - A changed `body_pattern` is a **new** `parser_templates` row (version+1), never an in-place edit — replayed against every `sample_input` first.
+- `raw_notifications` re-parsing uses `select backfill_resync();` — it resets `failed`/`needs_review`, never `success` (so manual edits aren't clobbered); flip a specific `success` row to `pending` by hand to reprocess just that one.
 - `raw_notifications` rows are never deleted and text never mutated post-insert (only `parse_status`/`parse_error`/`parser_template_id`/`linked_transaction_id` change).
 - No `service_role` key in the Android app, ever.
 - A new bank/e-wallet = a new template row, never per-package `if` in app code.

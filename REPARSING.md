@@ -33,12 +33,14 @@ Parsing is idempotent and re-runnable by construction:
   never creates a duplicate.
 - The parser only acts on rows whose `parse_status = 'pending'` (it returns
   early otherwise), so repeated backfills are cheap no-ops for already-parsed
-  rows.
+  rows. `backfill_resync()` (migration 202609010001) flips `failed`/`needs_review`
+  back to `pending` for you — it deliberately does **not** touch `success` rows,
+  so it can't clobber manual edits.
 
 To re-parse all history after a template/rule change, run in the SQL editor:
 
 ```sql
-select backfill_parse_pending();
+select backfill_resync();
 ```
 
 To re-parse a single row (e.g. after fixing one template):
@@ -60,7 +62,16 @@ select parse_raw_notification('<uuid>');
    are skipped, but the ones you specifically want to reprocess must be flipped
    back to `pending` first because the parser bails on anything that isn't
    `pending`.)
-4. Run `select backfill_parse_pending();`.
+4. Run `select backfill_resync();`.
+
+> Note: `parse_raw_notification` tries **every active template** for the package
+> (highest `version` first) and takes the first that strictly parses — so one
+> package (TnG v1–v6) can have several rows, one per distinct notification
+> format. A new format is a **new template row** (`version` bumps), never an
+> in-place regex edit. `reject_pattern` (202609010005) marks matching
+> marketing/reward bodies `ignored` before parsing, and `source_suffix_title`
+> (202609010002) renders the Source column as `<app> - <title>` (Samsung Wallet
+> shows the card name).
 
 ## Postgres regex gotchas (read before writing a `body_pattern`)
 
