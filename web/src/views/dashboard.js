@@ -1,4 +1,9 @@
-import { getTransactions, getCategories, updateTransaction, deleteTransaction } from '../api/transactions.js';
+import {
+  getTransactions,
+  getCategories,
+  updateTransaction,
+  deleteTransaction,
+} from '../api/transactions.js';
 import { getCurrencies } from '../api/currencies.js';
 import { getLatestHeartbeat } from '../api/heartbeat.js';
 import { getOpenAlerts, dismissAlert } from '../api/alerts.js';
@@ -77,13 +82,17 @@ export async function renderDashboard(root) {
   let totalMyr = 0;
   let skipped = 0;
 
-  for (const t of all) {
-    let myr;
-    if (t.currency === 'MYR') {
-      myr = Number(t.amount);
-    } else {
-      myr = await convert(Number(t.amount), t.currency, 'MYR', t.transaction_date);
-    }
+  const results = await Promise.allSettled(
+    all.map((t) =>
+      t.currency === 'MYR'
+        ? Promise.resolve(Number(t.amount))
+        : convert(Number(t.amount), t.currency, 'MYR', t.transaction_date),
+    ),
+  );
+  for (let i = 0; i < all.length; i++) {
+    const t = all[i];
+    const r = results[i];
+    const myr = r.status === 'fulfilled' ? r.value : null;
     if (myr === null) {
       if (t.direction === 'debit') skipped += 1;
       myrTotals.set(t.id, null);
@@ -117,7 +126,7 @@ export async function renderDashboard(root) {
     editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
     refresh();
   });
-  left.append(h, editBtn);
+  left.append(h, editBtn, csvExportBtn(debits, credits, myrTotals, categoryNames));
   const total = document.createElement('div');
   total.className = 'text-end';
   const totalLabel = document.createElement('div');
@@ -150,6 +159,10 @@ export async function renderDashboard(root) {
     },
     onDelete: async (id) => {
       await deleteTransaction(id);
+      refresh();
+    },
+    onToggleRecurring: async (id, value) => {
+      await updateTransaction(id, { is_recurring: value });
       refresh();
     },
   };
@@ -192,4 +205,62 @@ async function flushDirty() {
     );
   }
   return failures.length === 0;
+}
+
+// Build the CSV export button. Named function so the column name for the
+// recurring flag stays in sync with the actual data.
+function csvExportBtn(debits, credits, myrTotals, categoryNames) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-sm btn-outline-secondary';
+  btn.id = 'csv-export-btn';
+  btn.textContent = 'Export CSV';
+  btn.addEventListener('click', () => downloadCsv(debits, credits, myrTotals, categoryNames));
+  return btn;
+}
+
+function downloadCsv(debits, credits, myrTotals, categoryNames) {
+  const rows = [...debits, ...credits];
+  const header = [
+    'Date',
+    'Receiver',
+    'Category',
+    'Amount',
+    'Currency',
+    'MYR',
+    'Direction',
+    'Sent from',
+    'Recurring',
+    'Notes',
+  ];
+  const body = rows.map((t) => {
+    const myr = myrTotals.get(t.id);
+    return [
+      t.transaction_date,
+      t.merchant_raw ?? '',
+      (t.category_id && categoryNames.get(t.category_id)) || '',
+      t.amount,
+      t.currency,
+      myr !== null && myr !== undefined ? myr : '',
+      t.direction,
+      t.source_app_label ?? '',
+      t.is_recurring ? 'yes' : '',
+      t.notes ?? '',
+    ];
+  });
+  const csv = [header, ...body].map((r) => r.map(escapeCsv).join(',')).join('\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `transactions_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsv(value) {
+  const s = String(value ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }

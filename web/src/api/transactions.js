@@ -4,7 +4,7 @@ export async function getTransactions({ withinDays = 30, limit = 100, status = n
   let query = supabase
     .from('transactions')
     .select(
-      'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_app_label, status, notes',
+      'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_app_label, status, notes, is_recurring',
     )
     .order('transaction_date', { ascending: false })
     .limit(limit);

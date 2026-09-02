@@ -1,4 +1,10 @@
-import { formatMoney, formatDateTime, toDateTimeLocal, fromDateTimeLocal, currencyOptions } from '../utils/format.js';
+import {
+  formatMoney,
+  formatDateTime,
+  toDateTimeLocal,
+  fromDateTimeLocal,
+  currencyOptions,
+} from '../utils/format.js';
 import { confirmDelete } from './common.js';
 
 const DIRECTIONS = ['debit', 'credit'];
@@ -19,6 +25,7 @@ export function transactionTable({
   editMode = false,
   onDirty = null,
   onDelete = null,
+  onToggleRecurring = null,
 }) {
   const table = document.createElement('table');
   table.className = 'table table-sm table-striped align-middle';
@@ -84,6 +91,10 @@ export function transactionTable({
       tr.appendChild(
         actionCell({
           onDelete: () => onDelete(t.id),
+          isRecurring: t.is_recurring,
+          onToggleRecurring: onToggleRecurring
+            ? () => onToggleRecurring(t.id, !t.is_recurring)
+            : null,
         }),
       );
     }
@@ -267,9 +278,21 @@ export function transactionTable({
     return td;
   }
 
-  function actionCell({ onDelete } = {}) {
+  function actionCell({ onDelete, isRecurring, onToggleRecurring } = {}) {
     const td = document.createElement('td');
     td.className = 'text-end text-nowrap';
+    if (onToggleRecurring) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-link p-0 border-0';
+      btn.setAttribute('aria-label', 'Toggle recurring');
+      btn.title = isRecurring ? 'Marked as recurring — click to remove' : 'Mark as recurring';
+      btn.textContent = '🔁';
+      btn.style.opacity = isRecurring ? '1' : '0.3';
+      btn.style.fontSize = '16px';
+      btn.addEventListener('click', () => onToggleRecurring());
+      td.appendChild(btn);
+    }
     if (onDelete) {
       const del = document.createElement('button');
       del.type = 'button';

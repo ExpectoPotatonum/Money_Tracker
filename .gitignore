@@ -1,6 +1,7 @@
 node_modules/
 *.log
 expense-tracker-errors*.csv
+transactions_*.csv
 supabase/data.sql
 whatnext.md
 .DS_Store
