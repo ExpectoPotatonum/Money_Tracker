@@ -44,11 +44,11 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 | `api/alerts.js` | `getOpenAlerts()` (unresolved from `dashboard_alerts`), `dismissAlert(id)` (sets `resolved_at`) |
 | `api/reviewInbox.js` | `getReviewInbox({ status, packageName, limit })` — `raw_notifications` where `parse_status IN ('failed','needs_review')`; `getReviewPackages()` exists but unused currently |
 | `utils/format.js` | Currency formatting (`formatMoney`), date formatting (`formatDateTime`, `toDateTimeLocal`, `fromDateTimeLocal`) — all pinned to `Asia/Kuala_Lumpur`. Module-level mutable state: `SYMBOLS` map + `CURRENCY_OPTIONS` array, updated at runtime from the `currencies` DB table via `setCurrencySymbols()` |
-| `utils/fx.js` | `convert(amount, base, quote, date?)` — Frankfurter API (`api.frankfurter.dev/v2`), in-memory `Map` cache per (pair, date). With a date it freezes the rate at the transaction's own date (ADR 0003); without one it uses the latest rate. Returns `null` (never throws) on unavailable rates (ADR 0001) |
+| `utils/fx.js` | `convert(amount, base, quote, date?)` — Frankfurter API (`api.frankfurter.dev/v2`). With a date it freezes the rate at the transaction's own date (ADR 0003); without one it uses the latest rate. Returns `null` (never throws) on unavailable rates (ADR 0001). **Historical (dated) rates persist to `sessionStorage`** (survive refresh; undated "latest" stay in-memory so they never go stale) and in-flight requests are deduped so parallel `convert()` calls for the same (pair, date) share one HTTP request |
 | `components/common.js` | `alertBanner`, `emptyState`, `badge`, `confirmDelete` — pure DOM builders, no API calls |
-| `components/transactionTable.js` | 320 lines — the largest component. Renders a full `<table>` in two modes (read-only / edit). Internally: `draftFor()`, per-cell builders (date, receiver, category, amount, MYR, sent from, notes, actions), `normalizeDraft()` (diffs draft vs. original, returns only changed fields as a Supabase-ready patch object), and `onDirty(id, patch)` so the view accumulates edits and saves them when edit mode toggles off — no per-row Save buttons |
+| `components/transactionTable.js` | The largest component. Renders a full `<table>` in two modes (read-only / edit). Internally: `draftFor()`, per-cell builders (date, receiver, category, amount, MYR, sent from, notes, actions), `normalizeDraft()` (diffs draft vs. original, returns only changed fields as a Supabase-ready patch object), and `onDirty(id, patch)` so the view accumulates edits and saves them when edit mode toggles off — no per-row Save buttons. The action column, in **edit mode only**, holds a 🔁 recurring toggle and the delete red-cross |
 | `views/authGate.js` | Login/signup form — centered Bootstrap card, email+password, toggles between sign-in and sign-up modes. Handles email-confirmation-required flow |
-| `views/dashboard.js` | 195 lines — the main view. Fetches transactions, categories, heartbeat, alerts, currencies in parallel via `Promise.all`. Splits into debits ("Spending") + credits ("Money in"), converts each to MYR via `convert()`, accumulates totals, renders the table(s). Edit mode: toggle button → all rows inline-editable; edits accumulate per-row and are PATCHed in one batch when toggled **off** (and flushed on navigation); Delete is the only per-row action (red-cross icon). Shows heartbeat offline banner (>6h stale) and server-side alert banners |
+| `views/dashboard.js` | The main view. Fetches transactions, categories, heartbeat, alerts, currencies in parallel via `Promise.all`. Splits into debits ("Spending") + credits ("Money in"), converts each to MYR via `convert()` in parallel (`Promise.allSettled`), accumulates totals, renders the table(s). Edit mode: toggle button → all rows inline-editable; edits accumulate per-row and are PATCHed in one batch when toggled **off** (and flushed on navigation). **Export CSV** button in the header builds a `transactions_YYYY-MM-DD.csv` from the loaded rows (no extra query). Shows heartbeat offline banner (>6h stale) and server-side alert banners |
 | `views/reviewInbox.js` | Filterable table (All / Failed / Needs review) of `raw_notifications` with `parse_status` failures. Shows sanitized text (prefers `big_text` > `text_body` > `sub_text`), redaction badges (otp=red, balance=yellow, account=gray), parse error note |
 
 **Implemented features:**
@@ -64,6 +64,9 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 - **Credit-side categories + merchant rules** (migrations `202608300001`/`202608300002`): Salary, Transfers, Refunds, Cashback & Rewards, Investments/Interest, Gifts + recognizable incoming-sender rules. P2P receives carry the sender's *name* as merchant (e.g. TnG "HOO JET YUNG"), which no generic rule matches — set by hand in edit mode.
 - **Review inbox** — filterable table of failed/needs_review `raw_notifications`, showing sanitized notification text, redaction badges, parse errors. Safety valve for unrecognized formats.
 - **Client-side error logging** — all uncaught errors and API failures auto-captured to IndexedDB CSV logs for offline inspection.
+- **Manual recurring flag** (`transactions.is_recurring`, migration `202609020001`) — a 🔁 toggle in the **edit-mode** action column only (no auto-detection). Visible nowhere on read-only rows. The generic `updateTransaction(id, patch)` PATCHes it; no new mutation needed. **⚠ run migration `202609020001` in SQL Editor before the dashboard SELECTs `is_recurring`.**
+- **CSV export** — "Export CSV" button beside the Edit mode toggle in the dashboard header. Dumps the currently-loaded debits + credits to `transactions_YYYY-MM-DD.csv` with columns Date, Receiver, Category, Amount, Currency, MYR, Direction, Sent from, Recurring, Notes. Reuses the precomputed `myrTotals`, so no extra query; UTF-8 BOM so Excel opens it cleanly; fields are CSV-escaped (quotes/comma/newline).
+- **FX polish** — historical rates persist to `sessionStorage` (survive refresh; undated "latest" stay in-memory-only so they never go stale) and in-flight `convert()` calls are deduped per (pair, date), so the dashboard's parallel MYR loop (`Promise.allSettled`) fires one HTTP request per distinct rate instead of N.
 
 **Architecture principle (`ARCHITECTURE.md` §5):** No SPA framework yet. Plain ES modules + small render functions + thin `/api` layer. *"If UI complexity outgrows this (once charts/budgets/PWA land), the honest next step is a lightweight reactive layer (Preact or Alpine.js) rather than jumping straight to React."* Revisit at that point, not now.
 
@@ -80,6 +83,7 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 - `202608180002_db_parser_field_map.sql`, `202608180003_db_parser_infra.sql`, `202608180004_seed_templates.sql` — **applied live** (parsing verified).
 - `202608300001_seed_credit_categories.sql`, `202608300002_seed_credit_merchant_rules.sql`, `202608300003_seed_currencies.sql` — **applied live** (user ran them).
 - `202609010001_outbound_templates_and_resync.sql`, `202609010002_samsung_source_label.sql`, `202609010003_tng_transferred_leading_amount.sql`, `202609010004_parse_spike_includes_needs_review.sql`, `202609010005_reject_marketing.sql` — **applied live** (user ran them).
+- `202609020001_add_recurring_flag.sql` — **NOT yet applied** — run in SQL Editor before the dashboard SELECTs `is_recurring` (otherwise the transactions query errors).
 
 ## Verification status
 | Subsystem | Result |
@@ -89,6 +93,7 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 | Web: auth gate | ✅ email/password sign-in + sign-up with email confirmation |
 | Web: dashboard (read-only) | ✅ debits/credits split, MYR FX conversion (frozen at transaction date), heartbeat banner, alert banners, currency symbols from DB |
 | Web: edit mode (inline) | ✅ date, receiver (raw merchant text only), category dropdown, amount/currency/direction, notes (255-char, no counter), auto-save on toggle-off, red-cross Delete |
+| Web: recurring flag + CSV export | ⏳ built & e2e-verified in build — pending `202609020001` applied live to SELECT `is_recurring`. See §Supabase migrations to run |
 | Web: review inbox | ✅ filterable table (All/Failed/Needs review), redaction badges, parse error display |
 | Web: client-side logging | ✅ IndexedDB-backed CSV auto-logger, error + unhandledrejection hooks |
 | Web: ESLint + build | ✅ clean |
@@ -100,7 +105,7 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 2. **More parser templates / more apps** — only TnG + CIMB are live. Adding banks/wallets needs **real captured samples first** (AGENTS.md §14 rollout) — the next real-world gap.
 3. **Validate the redaction regex library** (§8) against real samples — still an open TODO.
 4. **Regression-test harness for `parser_templates`** (§9) — script the "replay vs `sample_input`" step once there are more templates.
-5. **Later scope (deferred by design)** — budgets, recurring detection, CSV export, PWA install, chart library. Budget/trend views inherit the frozen-at-transaction-date FX (ADR 0003) automatically.
+5. **Still-later scope (deferred by design)** — budgets, subscription auto-detection, PWA install, chart library. (Manual recurring flagging, CSV export, and FX polish are done.) Budget/trend views inherit the frozen-at-transaction-date FX (ADR 0003) automatically.
 
 ## Conventions that gate future work
 - A changed `body_pattern` is a **new** `parser_templates` row (version+1), never an in-place edit — replayed against every `sample_input` first.

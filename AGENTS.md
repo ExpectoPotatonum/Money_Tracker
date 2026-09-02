@@ -318,7 +318,7 @@ A different failure mode from §10 — this is "captured fine, but no signal rig
 **Explicitly deferred:**
 - Gmail / email receipts — notification text for email is a thin, truncated first line; if e-receipts matter later, the Gmail API (full message bodies) is a better source than the notification listener for this one channel specifically.
 - SMS parsing.
-- Budget thresholds, recurring/subscription detection, CSV export, PWA install, chart library wiring.
+- Budget thresholds, subscription *auto-*detection, PWA install, chart library wiring. (Manual recurring flagging and CSV export are done — §15.)
 
 Still in scope despite the SMS/email exclusion: cross-app duplicate detection (§6) — an e-wallet and its underlying bank card can both legitimately notify the same real-world payment.
 
@@ -327,7 +327,7 @@ Still in scope despite the SMS/email exclusion: cross-app duplicate detection (�
 1. **Capture-only, 1–2 weeks.** Ship the listener + Room + sync pipeline with no parsing at all, across every target app. Real notification formats vary by account type and language setting in ways that are hard to predict from memory — build `parser_templates` and the §8 redaction patterns from real samples, not assumptions. Confirm exact package names on-device (`adb shell pm list packages`, or a package-viewer app) before finalizing the listener's filter list — regional variants of the same bank can share a display name but not a package id.
 2. **Parsing + sanitization, from real samples.** Write `parser_templates` and validate the §8 redaction pass against what was actually gathered. Backfill-parse the phase-1 backlog once templates exist.
 3. **Dashboard read views.** Transaction list, review inbox, heartbeat banner.
-4. **Later:** budgets, recurring detection, CSV export, PWA, FX polish (§15).
+4. **Later:** budgets, subscription auto-detection, PWA, charts. (Manual recurring flagging, CSV export, and FX polish are done — §15.)
 
 ## 15. Open decisions / TODO
 
@@ -347,6 +347,7 @@ Still in scope despite the SMS/email exclusion: cross-app duplicate detection (�
 - **Samsung Wallet source shows the card** — `source_suffix_title` (202609010002) renders "Samsung Wallet - HLB Debit Card" in the dashboard's **Sent from** column, generalizing to any card/bank under Samsung Wallet because the notification *title* is the card name.
 - **Direction: bare "transferred" is NOT credit** — `infer_direction` only treats "transferred … to you" as credit (202609010005); "You have successfully transferred RM X to <name>" is a real debit. Matches the JS `parser.ts` CREDIT_WORDS list, which never contained "transferred".
 - **Parse-spike alert counts `needs_review`** (202609010004) — new formats that still carry a decimal amount land in `needs_review`, which the old `failed`-only view missed. Surfacing these early is what turns silent "Unknown" merchants into a same-day alert.
+- **Coax Phase 4 features:** **manual recurring flag** (`transactions.is_recurring`, migration 202609020001) toggled via a 🔁 button in the **edit-mode** action column only (read-only rows show it nowhere) — no auto-detection; **CSV export** button in the dashboard header (beside the Edit mode toggle) dumps the currently-loaded debits + credits to `transactions_YYYY-MM-DD.csv` with columns Date, Receiver, Category, Amount, Currency, MYR, Direction, Sent from, Recurring, Notes (uses the already-computed `myrTotals`, no extra query); **FX polish** in `utils/fx.js` — historical rates now persist to **sessionStorage** (survive refresh; undated "latest" rates stay in-memory-only so they never go stale) and in-flight requests are deduped so parallel `convert()` calls for the same (pair, date) fire one HTTP request instead of N.
 
 **Still open:**
 - **Redaction regex library** (§8) — OTP, balance, *and* now account/card patterns — is a proposed design, not yet validated against real notification samples. Treat phase 1 of the rollout (§14) as the point to validate all three, not just the parsing templates.
