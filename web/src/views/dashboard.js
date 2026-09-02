@@ -9,14 +9,26 @@ import { transactionTable } from '../components/transactionTable.js';
 
 const OFFLINE_AFTER_HOURS = 6;
 
-// Edit mode is a dashboard-level toggle (all rows editable at once). A save or
-// delete re-renders the whole dashboard so totals and the MYR column refresh.
+// Edit mode is a dashboard-level toggle (all rows editable at once). Edits are
+// accumulated per-row in `dirtyRows` as the user types and PATCHed in one pass
+// when edit mode is toggled off — no per-row Save buttons (whatnext #5).
 let editMode = false;
 let refresh = null;
+const dirtyRows = new Map();
+let hashchangeGuardInstalled = false;
 
 export async function renderDashboard(root) {
   root.replaceChildren();
   refresh = () => renderDashboard(root);
+
+  // If the user navigates away with edit mode on, don't silently drop edits —
+  // flush them before the next view swaps in.
+  if (!hashchangeGuardInstalled) {
+    hashchangeGuardInstalled = true;
+    window.addEventListener('hashchange', async () => {
+      if (editMode) await flushDirty();
+    });
+  }
 
   const [transactions, categoryNames, heartbeat, alerts, currencies] = await Promise.all([
     getTransactions({ withinDays: 30, limit: 100 }),
@@ -53,9 +65,11 @@ export async function renderDashboard(root) {
     );
   }
 
-  // Every transaction normalized to MYR at display time (constraint 3 — the DB
-  // only ever stores original amount + currency). Rows whose rate is unavailable
-  // fall back to showing the original amount, never to hiding.
+  // Every transaction converted to MYR at display time (constraint 3 — the DB
+  // only ever stores original amount + currency). The rate is frozen at the
+  // transaction's own date (ADR 0003) so past rows don't drift as live rates
+  // move; rows whose historical rate is unavailable fall back to showing the
+  // original amount, never to hiding.
   const debits = transactions.filter((t) => t.direction === 'debit');
   const credits = transactions.filter((t) => t.direction === 'credit');
   const all = [...debits, ...credits];
@@ -68,7 +82,7 @@ export async function renderDashboard(root) {
     if (t.currency === 'MYR') {
       myr = Number(t.amount);
     } else {
-      myr = await convert(Number(t.amount), t.currency, 'MYR');
+      myr = await convert(Number(t.amount), t.currency, 'MYR', t.transaction_date);
     }
     if (myr === null) {
       if (t.direction === 'debit') skipped += 1;
@@ -91,8 +105,14 @@ export async function renderDashboard(root) {
   editBtn.id = 'edit-mode-toggle';
   editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
   editBtn.textContent = editMode ? 'Edit mode: ON' : 'Edit mode';
-  editBtn.addEventListener('click', () => {
-    editMode = !editMode;
+  editBtn.addEventListener('click', async () => {
+    if (editMode) {
+      // Leaving edit mode persists every pending change; on failure stay in
+      // edit mode so the user's edits survive for another try.
+      if (await flushDirty()) editMode = false;
+    } else {
+      editMode = true;
+    }
     editBtn.textContent = editMode ? 'Edit mode: ON' : 'Edit mode';
     editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
     refresh();
@@ -124,9 +144,9 @@ export async function renderDashboard(root) {
     categoryNames,
     myrTotals,
     editMode,
-    onSave: async (id, patch) => {
-      await updateTransaction(id, patch);
-      refresh();
+    onDirty: (id, patch) => {
+      if (patch) dirtyRows.set(id, patch);
+      else dirtyRows.delete(id);
     },
     onDelete: async (id) => {
       await deleteTransaction(id);
@@ -142,4 +162,34 @@ export async function renderDashboard(root) {
     root.appendChild(creditHeading);
     root.appendChild(transactionTable({ transactions: credits, ...tableProps }));
   }
+}
+
+// PATCH every dirty row in one pass. Clears the map first, then re-queues any
+// that fail so a later toggle-off (or navigation flush) retries them. Returns
+// true when everything saved (or there was nothing to save).
+async function flushDirty() {
+  const pending = [...dirtyRows.entries()];
+  if (pending.length === 0) return true;
+
+  dirtyRows.clear();
+  const results = await Promise.allSettled(
+    pending.map(([id, patch]) => updateTransaction(id, patch)),
+  );
+
+  const failures = [];
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      dirtyRows.set(pending[i][0], pending[i][1]);
+      const reason = r.reason?.message ?? r.reason;
+      failures.push(`${pending[i][0].slice(0, 8)}: ${reason}`);
+    }
+  });
+
+  if (failures.length > 0) {
+    window.alert(
+      `Save failed for ${failures.length} row(s):\n${failures.join('\n')}` +
+        '\n\nThey will be retried the next time you leave edit mode.',
+    );
+  }
+  return failures.length === 0;
 }

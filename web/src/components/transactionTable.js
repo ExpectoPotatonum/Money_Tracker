@@ -6,16 +6,18 @@ const NOTES_MAX = 255;
 
 /**
  * Renders the transactions table. In edit mode every data cell becomes an
- * editable control, with per-row Save/Delete. Cell values are rendered via
- * textContent (untrusted-notification-input convention) — only the form
- * controls the user interacts with use inputs.
+ * editable control; changes are reported via `onDirty(id, patch)` and saved
+ * by the view when edit mode is toggled off (no per-row Save buttons). Delete
+ * is the only per-row action. Cell values are rendered via textContent
+ * (untrusted-notification-input convention) — only the form controls the user
+ * interacts with use inputs.
  */
 export function transactionTable({
   transactions,
   categoryNames,
   myrTotals = new Map(),
   editMode = false,
-  onSave = null,
+  onDirty = null,
   onDelete = null,
 }) {
   const table = document.createElement('table');
@@ -24,11 +26,11 @@ export function transactionTable({
   const thead = document.createElement('thead');
   thead.innerHTML = `<tr>
     <th>Date</th>
-    <th>Merchant</th>
+    <th>Receiver</th>
     <th>Category</th>
     <th class="text-end">Amount</th>
     <th class="text-end">MYR</th>
-    <th>Source</th>
+    <th>Sent from</th>
     <th>Notes</th>
     <th></th>
   </tr>`;
@@ -67,25 +69,21 @@ export function transactionTable({
     } else {
       // --- Editable row ---
       const draft = draftFor(t);
+      // Every edit recomputes the diff vs. the original and reports it; the
+      // view accumulates these and PATCHes them all when edit mode closes.
+      const report = () => {
+        if (onDirty) onDirty(t.id, normalizeDraft(draft, t));
+      };
 
-      tr.appendChild(dateInputCell(draft));
-      tr.appendChild(merchantEditCell(draft));
-      tr.appendChild(categoryEditCell(draft, categoryNames));
-      tr.appendChild(amountEditCell(draft));
+      tr.appendChild(dateInputCell(draft, report));
+      tr.appendChild(merchantEditCell(draft, report));
+      tr.appendChild(categoryEditCell(draft, categoryNames, report));
+      tr.appendChild(amountEditCell(draft, report));
       tr.appendChild(myrCell(t, myrTotals)); // MYR recomputed on refresh, not editable
       tr.appendChild(sourceCell(t));
-      tr.appendChild(notesEditCell(draft));
+      tr.appendChild(notesEditCell(draft, report));
       tr.appendChild(
         actionCell({
-          onSave: async () => {
-            const patch = normalizeDraft(draft, t);
-            if (!patch) return; // nothing changed — no-op PATCH
-            try {
-              await onSave(t.id, patch);
-            } catch (err) {
-              window.alert(`Save failed: ${err.message}`);
-            }
-          },
           onDelete: () => onDelete(t.id),
         }),
       );
@@ -151,7 +149,7 @@ export function transactionTable({
   }
 
   // ---- edit-mode cell builders ----
-  function dateInputCell(draft) {
+  function dateInputCell(draft, report) {
     const td = document.createElement('td');
     const input = document.createElement('input');
     input.type = 'datetime-local';
@@ -159,20 +157,22 @@ export function transactionTable({
     input.value = toDateTimeLocal(draft.transaction_date);
     input.addEventListener('input', () => {
       draft.transaction_date = fromDateTimeLocal(input.value);
+      report();
     });
     td.appendChild(input);
     return td;
   }
 
-  function merchantEditCell(draft) {
+  function merchantEditCell(draft, report) {
     const td = document.createElement('td');
     const display = document.createElement('input');
     display.type = 'text';
     display.className = 'form-control form-control-sm';
-    display.placeholder = 'Merchant';
+    display.placeholder = 'Receiver';
     display.value = draft.merchant_display;
     display.addEventListener('input', () => {
       draft.merchant_display = display.value;
+      report();
     });
     const raw = document.createElement('input');
     raw.type = 'text';
@@ -181,12 +181,13 @@ export function transactionTable({
     raw.value = draft.merchant_raw;
     raw.addEventListener('input', () => {
       draft.merchant_raw = raw.value;
+      report();
     });
     td.append(display, raw);
     return td;
   }
 
-  function categoryEditCell(draft, cats) {
+  function categoryEditCell(draft, cats, report) {
     const td = document.createElement('td');
     const select = document.createElement('select');
     select.className = 'form-select form-select-sm';
@@ -204,12 +205,13 @@ export function transactionTable({
     select.value = draft.category_id;
     select.addEventListener('change', () => {
       draft.category_id = select.value;
+      report();
     });
     td.appendChild(select);
     return td;
   }
 
-  function amountEditCell(draft) {
+  function amountEditCell(draft, report) {
     const td = document.createElement('td');
     td.className = 'text-end';
     const wrap = document.createElement('div');
@@ -222,6 +224,7 @@ export function transactionTable({
     amount.value = draft.amount;
     amount.addEventListener('input', () => {
       draft.amount = amount.value;
+      report();
     });
     const currency = document.createElement('select');
     currency.className = 'form-select form-select-sm w-auto';
@@ -235,6 +238,7 @@ export function transactionTable({
     currency.value = draft.currency;
     currency.addEventListener('change', () => {
       draft.currency = currency.value;
+      report();
     });
     const direction = document.createElement('select');
     direction.className = 'form-select form-select-sm w-auto';
@@ -248,13 +252,14 @@ export function transactionTable({
     direction.value = draft.direction;
     direction.addEventListener('change', () => {
       draft.direction = direction.value;
+      report();
     });
     wrap.append(amount, currency, direction);
     td.appendChild(wrap);
     return td;
   }
 
-  function notesEditCell(draft) {
+  function notesEditCell(draft, report) {
     const td = document.createElement('td');
     const input = document.createElement('textarea');
     input.className = 'form-control form-control-sm';
@@ -263,41 +268,35 @@ export function transactionTable({
     input.value = draft.notes;
     input.placeholder = 'Add a comment…';
     input.addEventListener('input', () => {
+      // maxLength already hard-stops typing; the slice is the same guard for
+      // anything pasting in more than the field allows at once.
       draft.notes = input.value.slice(0, NOTES_MAX);
+      report();
     });
-    const counter = document.createElement('div');
-    counter.className = 'small text-muted mt-1';
-    const updateCounter = () => {
-      counter.textContent = `${(draft.notes ?? '').length}/${NOTES_MAX}`;
-    };
-    input.addEventListener('input', updateCounter);
-    updateCounter();
-    td.append(input, counter);
+    td.appendChild(input);
     return td;
   }
 
-  function actionCell({ onSave, onDelete } = {}) {
+  function actionCell({ onDelete } = {}) {
     const td = document.createElement('td');
     td.className = 'text-end text-nowrap';
-    if (onSave || onDelete) {
-      if (onSave) {
-        const save = document.createElement('button');
-        save.type = 'button';
-        save.className = 'btn btn-sm btn-primary me-1';
-        save.textContent = 'Save';
-        save.addEventListener('click', onSave);
-        td.appendChild(save);
-      }
-      if (onDelete) {
-        const del = document.createElement('button');
-        del.type = 'button';
-        del.className = 'btn btn-sm btn-outline-danger';
-        del.textContent = 'Delete';
-        del.addEventListener('click', () => {
-          if (confirmDelete()) onDelete();
-        });
-        td.appendChild(del);
-      }
+    if (onDelete) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn btn-sm btn-link p-0 border-0';
+      del.setAttribute('aria-label', 'Delete');
+      del.title = 'Delete';
+      const img = document.createElement('img');
+      img.src = '/red-cross-mark.png';
+      img.alt = '';
+      img.className = 'd-block';
+      img.style.width = '22px';
+      img.style.height = '22px';
+      del.appendChild(img);
+      del.addEventListener('click', () => {
+        if (confirmDelete()) onDelete();
+      });
+      td.appendChild(del);
     }
     return td;
   }

@@ -1,6 +1,7 @@
 node_modules/
 *.log
 expense-tracker-errors*.csv
+supabase/data.sql
 .DS_Store
 test-results/
 playwright-report/
