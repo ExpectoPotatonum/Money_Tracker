@@ -70,7 +70,7 @@ select parse_raw_notification('<uuid>');
 > format. A new format is a **new template row** (`version` bumps), never an
 > in-place regex edit. `reject_pattern` (202609010005) marks matching
 > marketing/reward bodies `ignored` before parsing, and `source_suffix_title`
-> (202609010002) renders the Source column as `<app> - <title>` (Samsung Wallet
+> (202609010002) renders the dashboard's Send-from column as `<app> - <title>` (Samsung Wallet
 > shows the card name).
 
 ## Postgres regex gotchas (read before writing a `body_pattern`)

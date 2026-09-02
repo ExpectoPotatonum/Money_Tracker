@@ -46,7 +46,6 @@ export function transactionTable({
       amount: String(t.amount),
       currency: t.currency,
       direction: t.direction,
-      merchant_display: t.merchant_display ?? '',
       merchant_raw: t.merchant_raw ?? '',
       category_id: t.category_id ?? '',
       notes: t.notes ?? '',
@@ -165,25 +164,16 @@ export function transactionTable({
 
   function merchantEditCell(draft, report) {
     const td = document.createElement('td');
-    const display = document.createElement('input');
-    display.type = 'text';
-    display.className = 'form-control form-control-sm';
-    display.placeholder = 'Receiver';
-    display.value = draft.merchant_display;
-    display.addEventListener('input', () => {
-      draft.merchant_display = display.value;
-      report();
-    });
     const raw = document.createElement('input');
     raw.type = 'text';
-    raw.className = 'form-control form-control-sm mt-1';
-    raw.placeholder = 'Raw text';
+    raw.className = 'form-control form-control-sm';
+    raw.placeholder = 'Receiver (raw text)';
     raw.value = draft.merchant_raw;
     raw.addEventListener('input', () => {
       draft.merchant_raw = raw.value;
       report();
     });
-    td.append(display, raw);
+    td.appendChild(raw);
     return td;
   }
 
@@ -315,9 +305,6 @@ function normalizeDraft(draft, original) {
   }
   if (draft.currency !== original.currency) patch.currency = draft.currency;
   if (draft.direction !== original.direction) patch.direction = draft.direction;
-  if ((draft.merchant_display || null) !== (original.merchant_display ?? null)) {
-    patch.merchant_display = draft.merchant_display || null;
-  }
   if ((draft.merchant_raw || null) !== (original.merchant_raw ?? null)) {
     patch.merchant_raw = draft.merchant_raw || null;
   }
