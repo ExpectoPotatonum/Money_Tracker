@@ -27,16 +27,52 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 - **`failed_parse_spikes` view** (202609010004) counts `needs_review` too, so a new format that still carries a decimal amount triggers the spike alert instead of hiding silently.
 - **Verified live after re-parse:** PINDUODUO→Shopping, FP-AEON→AEON→Shopping, MUJI→Shopping, KEDAI KOPI 66 & LEMON KOAY TEOW THNG→Food & Dining, Berjaya Starbucks→Starbucks→Food & Dining, HOO JET YUNG→Finance & Transfer — all `high`/`confirmed`. Samsung row still needing a targeted re-run so its Source reads "Samsung Wallet - HLB Debit Card" (see §What's next).
 
-### Web dashboard (working on localhost)
-- Auth gate, transaction table (debits "Spending" + credits "Money in"), MYR FX conversion (Frankfurter) at display time, review inbox, heartbeat offline banner, alerts.
-- **Manual edit/delete mode** — inline per-cell editing behind an **Edit mode** toggle: date (MYT), merchant display+raw, category dropdown, amount/currency/direction, and a **255-char comment** field. Per-row **Save** (PATCH) and **Delete** (gated behind edit mode). Dates pinned to `Asia/Kuala_Lumpur`.
-  - **`status` is deliberately not user-editable** — the status dropdown was removed as useless to the owner; `status` stays a DB column, written only by the parse layer.
+### Web dashboard (working on localhost — architecture & implementation detail)
+
+**Stack & architecture:** Plain ES modules, no SPA framework, no client-side router (`ARCHITECTURE.md` §5). Hash-based navigation (`#/` → dashboard, `#/review` → review inbox) via a `hashchange` listener in `main.js`. Vite is used only for dev-server hot reload and ES module bundling for Netlify's static output — it's a build tool, not a framework. All UI is constructed programmatically via `document.createElement`; there are zero HTML templates and zero `innerHTML` calls (every user-supplied value is set via `textContent`).
+
+**File structure follows `ARCHITECTURE.md` §5 exactly:**
+
+| Path | Role |
+|---|---|
+| `lib/supabaseClient.js` | Single Supabase client instance (`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`) — every API module imports it |
+| `lib/logger.js` | Client-side error auto-logger — IndexedDB-backed CSV logs, max 5 files / 5 MB, auto-rotating. `installLogger()` hooks `window.error` + `unhandledrejection`; `logApiError()` is called from `main.js` catch blocks |
+| `api/auth.js` | `getSession`, `onAuthStateChange`, `signIn`, `signUp`, `signOut` — thin wrappers around `supabase.auth.*` |
+| `api/transactions.js` | `getTransactions({ withinDays, limit, status })`, `getCategories()` (returns `Map<id,name>`), `updateTransaction(id, patch)`, `deleteTransaction(id)` |
+| `api/currencies.js` | `getCurrencies()` — fetches `code, symbol` from DB reference table; **gracefully degrades to `[]`** if the table doesn't exist yet |
+| `api/heartbeat.js` | `getLatestHeartbeat()` — single most recent row from `device_heartbeat` |
+| `api/alerts.js` | `getOpenAlerts()` (unresolved from `dashboard_alerts`), `dismissAlert(id)` (sets `resolved_at`) |
+| `api/reviewInbox.js` | `getReviewInbox({ status, packageName, limit })` — `raw_notifications` where `parse_status IN ('failed','needs_review')`; `getReviewPackages()` exists but unused currently |
+| `utils/format.js` | Currency formatting (`formatMoney`), date formatting (`formatDateTime`, `toDateTimeLocal`, `fromDateTimeLocal`) — all pinned to `Asia/Kuala_Lumpur`. Module-level mutable state: `SYMBOLS` map + `CURRENCY_OPTIONS` array, updated at runtime from the `currencies` DB table via `setCurrencySymbols()` |
+| `utils/fx.js` | `convert(amount, base, quote)` — Frankfurter API (`api.frankfurter.dev/v2`), in-memory `Map` cache per pair. Returns `null` (never throws) on unavailable rates (ADR 0001) |
+| `components/common.js` | `alertBanner`, `emptyState`, `badge`, `confirmDelete` — pure DOM builders, no API calls |
+| `components/transactionTable.js` | 334 lines — the largest component. Renders a full `<table>` in two modes (read-only / edit). Internally: `draftFor()`, per-cell builders (date, merchant, category, amount, MYR, source, notes, actions), `normalizeDraft()` (diffs draft vs. original, returns only changed fields as a Supabase-ready patch object) |
+| `views/authGate.js` | Login/signup form — centered Bootstrap card, email+password, toggles between sign-in and sign-up modes. Handles email-confirmation-required flow |
+| `views/dashboard.js` | 145 lines — the main view. Fetches transactions, categories, heartbeat, alerts, currencies in parallel via `Promise.all`. Splits into debits ("Spending") + credits ("Money in"), converts each to MYR via `convert()`, accumulates totals, renders the table(s). Edit mode: toggle button → all rows become inline-editable; per-row Save (PATCH) + Delete. Shows heartbeat offline banner (>6h stale) and server-side alert banners |
+| `views/reviewInbox.js` | Filterable table (All / Failed / Needs review) of `raw_notifications` with `parse_status` failures. Shows sanitized text (prefers `big_text` > `text_body` > `sub_text`), redaction badges (otp=red, balance=yellow, account=gray), parse error note |
+
+**Implemented features:**
+- **Auth gate** — email/password sign-in + sign-up with email confirmation flow.
+- **Transaction table** — read-only mode (Date, Merchant, Category, Amount, MYR, Source, Notes) and edit mode (all cells become inline inputs: `<input type="datetime-local">`, merchant display + raw text inputs, category `<select>`, amount number + currency `<select>` + direction `<select>`, notes `<textarea>` with 255-char live counter).
+- **MYR FX conversion** — every non-MYR transaction converted at display time via Frankfurter; unavailable rates degrade to showing original amount (never throws). Skipped-rate info banner shown when counts > 0.
+- **Split view** — debits shown under "Spending", credits under "Money in" (separate tables if any credits exist).
+- **Edit mode** — toggle button enables inline per-cell editing on all rows. `normalizeDraft()` diffs each draft against the original and only PATCHes changed fields. Delete gated behind `window.confirm()`. Per-row Save and Delete buttons.
+- **`status` is deliberately not user-editable** — the status dropdown was removed as useless to the owner; `status` stays a DB column, written only by the parse layer.
+- **Heartbeat offline banner** — shows warning when `device_heartbeat.last_seen_at` is >6 hours old, with "Xh ago" text.
+- **Dashboard alerts** — server-side alerts from `dashboard_alerts` table rendered as dismissible Bootstrap banners; severity `critical` maps to `alert-danger`.
 - **Currencies are a DB reference table** (`currencies`, migration `202608300003`, GRANT+RLS read policy). The app reads it at runtime (`api/currencies.js` → `setCurrencySymbols`/`currencyOptions` in `utils/format.js`) to build the edit dropdown + display symbols, with built-in fallbacks. **Adding a currency = one `INSERT`, no app release.** v1: MYR, CNY, TWD, USD, SGD.
 - **Credit-side categories + merchant rules** (migrations `202608300001`/`202608300002`): Salary, Transfers, Refunds, Cashback & Rewards, Investments/Interest, Gifts + recognizable incoming-sender rules. P2P receives carry the sender's *name* as merchant (e.g. TnG "HOO JET YUNG"), which no generic rule matches — set by hand in edit mode.
+- **Review inbox** — filterable table of failed/needs_review `raw_notifications`, showing sanitized notification text, redaction badges, parse errors. Safety valve for unrecognized formats.
+- **Client-side error logging** — all uncaught errors and API failures auto-captured to IndexedDB CSV logs for offline inspection.
+
+**Architecture principle (`ARCHITECTURE.md` §5):** No SPA framework yet. Plain ES modules + small render functions + thin `/api` layer. *"If UI complexity outgrows this (once charts/budgets/PWA land), the honest next step is a lightweight reactive layer (Preact or Alpine.js) rather than jumping straight to React."* Revisit at that point, not now.
+
+**Testing:** Playwright e2e tests (auth gate, transaction list rendering, review inbox filter, edit mode + delete) — run via `npm run test:e2e`. ESLint + Prettier enforced. Deliberately light test coverage per `ARCHITECTURE.md` §8: *"it's a thin read layer over data whose correctness is already guaranteed upstream by RLS and the schema's constraints."*
 
 ## Key decisions made this session (AGENTS.md §15)
 - No automated cross-app dedup — an e-wallet + its underlying card both notify the same real transfer; the owner deletes the duplicate in edit mode instead.
-- FX provider: **Frankfurter** (ADR 0001); unavailable rates degrade to the original amount.
+- FX provider: **Frankfurter** (`docs/adr/0001-fx-api-provider.md`); unavailable rates degrade to the original amount.
+- Auth session lifecycle: access tokens are short-lived JWTs; the Android app caches the full session, maps 401/403 to `UnauthorizedException` that clears stale tokens (`docs/adr/0002-auth-session-lifecycle.md`).
 - Parsing lives in Postgres on the free tier, not an Edge Function.
 
 ## Supabase migrations to run (SQL Editor) — applied live
@@ -49,9 +85,13 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 |---|---|
 | Capture → sync → parse → display | ✅ verified live (TnG + CIMB) |
 | TnG outbound + Samsung merchant/category parse | ✅ re-parsed, merchants/categories resolved — except one Samsung row still showing source "Samsung Wallet" pending the targeted re-run in §What's next |
-| Web edit/delete + currencies + comment field | ✅ working on localhost:5173 |
-| Web ESLint + build | ✅ clean |
-| Web Playwright e2e | ✅ (7 tests incl. edit-mode/delete; run via `npm run test:e2e` on the user's machine — the shell here couldn't run Playwright) |
+| Web: auth gate | ✅ email/password sign-in + sign-up with email confirmation |
+| Web: dashboard (read-only) | ✅ debits/credits split, MYR FX conversion, heartbeat banner, alert banners, currency symbols from DB |
+| Web: edit mode (inline) | ✅ date, merchant (display+raw), category dropdown, amount/currency/direction, notes (255-char), per-row Save/Delete |
+| Web: review inbox | ✅ filterable table (All/Failed/Needs review), redaction badges, parse error display |
+| Web: client-side logging | ✅ IndexedDB-backed CSV auto-logger, error + unhandledrejection hooks |
+| Web: ESLint + build | ✅ clean |
+| Web: Playwright e2e | ✅ 3 spec files (auth, dashboard, logger) — run via `npm run test:e2e` |
 | Android | ✅ built + installed by the user; capture verified |
 
 ## What's next
@@ -60,7 +100,8 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 3. **Resolve the cashback question** — whether to drop the `cashback` token from the TnG `reject_pattern` so genuine cashback *refunds* still parse as credits (currently cashback pushes are `ignored`).
 4. **Validate the redaction regex library** (§8) against real samples — still an open TODO.
 5. **Regression-test harness for `parser_templates`** (§9) — script the "replay vs `sample_input`" step once there are more templates.
-6. **Later scope (deferred by design)** — budgets, recurring detection, CSV export, PWA install, chart library.
+6. **UI logic fixes** — in progress (the session that produced this update).
+7. **Later scope (deferred by design)** — budgets, recurring detection, CSV export, PWA install, chart library.
 
 ## Conventions that gate future work
 - A changed `body_pattern` is a **new** `parser_templates` row (version+1), never an in-place edit — replayed against every `sample_input` first.
