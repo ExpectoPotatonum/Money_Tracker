@@ -6,6 +6,7 @@ import {
   currencyOptions,
 } from '../utils/format.js';
 import { confirmDelete } from './common.js';
+import { buildSourceEditor } from '../utils/sources.js';
 import { t as tr } from '../lib/i18n.js';
 
 const DIRECTIONS = ['debit', 'credit'];
@@ -59,6 +60,7 @@ export function transactionTable({
       direction: t.direction,
       merchant_raw: t.merchant_raw ?? '',
       category_id: t.category_id ?? '',
+      source_app_label: t.source_app_label ?? '',
       notes: t.notes ?? '',
     };
   }
@@ -90,7 +92,7 @@ export function transactionTable({
       tr.appendChild(categoryEditCell(draft, categoryNames, report));
       tr.appendChild(amountEditCell(draft, report));
       tr.appendChild(myrCell(t, myrTotals)); // MYR recomputed on refresh, not editable
-      tr.appendChild(sourceCell(t));
+      tr.appendChild(sourceEditCell(draft, report));
       tr.appendChild(notesEditCell(draft, report));
       tr.appendChild(
         actionCell({
@@ -178,6 +180,20 @@ export function transactionTable({
     const td = document.createElement('td');
     td.className = 'text-muted small';
     td.textContent = t.source_app_label ?? t.source_package;
+    return td;
+  }
+
+  function sourceEditCell(draft, report) {
+    const td = document.createElement('td');
+    td.appendChild(
+      buildSourceEditor(draft.source_app_label, {
+        allowEmpty: true,
+        onChange: (v) => {
+          draft.source_app_label = v ?? '';
+          report();
+        },
+      }),
+    );
     return td;
   }
 
@@ -367,6 +383,10 @@ function normalizeDraft(draft, original) {
   const notes = (draft.notes ?? '').slice(0, 255) || null;
   if (notes !== (original.notes ?? null)) {
     patch.notes = notes;
+  }
+  const source = (draft.source_app_label ?? '').trim() || null;
+  if (source !== (original.source_app_label ?? null)) {
+    patch.source_app_label = source;
   }
 
   return Object.keys(patch).length ? patch : null;

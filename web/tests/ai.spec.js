@@ -161,7 +161,32 @@ test('NL bookkeeping: sentence -> AI preview -> insert a manual transaction', as
   expect(posts[0]).toContain('"amount":45.8');
   expect(posts[0]).toContain('"direction":"debit"');
   expect(posts[0]).toContain('"source_package":"manual"');
+  expect(posts[0]).toContain('"source_app_label":"Cash"');
   expect(posts[0]).toContain('"confidence":"low"');
+});
+
+test('NL bookkeeping: the source can be switched to a custom label', async ({ page }) => {
+  const posts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/transactions')) {
+      posts.push(req.postData());
+    }
+  });
+  await open(page);
+
+  await page.click('#nl-add-btn');
+  const dialog = page.locator('dialog');
+  await dialog.locator('textarea').fill('paid rm50 for koayiaoteng at 7village');
+  await page.click('#nl-parse-btn');
+  await expect(page.locator('#nl-save-btn')).toBeVisible();
+
+  await dialog.locator('select.source-picker').selectOption('__custom__');
+  await dialog.locator('input.source-picker-custom').fill('GrabPay');
+  await page.click('#nl-save-btn');
+
+  await expect.poll(() => posts.length).toBe(1);
+  expect(posts[0]).toContain('"source_app_label":"GrabPay"');
+  expect(posts[0]).toContain('"source_package":"manual"');
 });
 
 test('LLM model 404 shows a diagnostic instead of the generic parse failure', async ({ page }) => {

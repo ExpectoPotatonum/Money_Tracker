@@ -2,6 +2,7 @@ import { openModal } from './common.js';
 import { parseTransactionText, llmErrorMessage } from '../utils/ai.js';
 import { insertTransaction } from '../api/transactions.js';
 import { toDateTimeLocal, fromDateTimeLocal, currencyOptions } from '../utils/format.js';
+import { buildSourceEditor, DEFAULT_SOURCE } from '../utils/sources.js';
 import { llmConfigured } from '../utils/llm.js';
 import { openSettings } from './settingsDialog.js';
 import { t } from '../lib/i18n.js';
@@ -119,6 +120,20 @@ export function openNlModal({ categoryNames, onSaved = null }) {
     );
     fields.appendChild(category.wrap('col-12'));
 
+    // Source (payment method) — defaults to Cash; the picker allows any custom
+    // label. Manual rows keep source_package 'manual'; only the label changes.
+    const sourceCol = document.createElement('div');
+    sourceCol.className = 'col-6';
+    let sourceLabel = DEFAULT_SOURCE;
+    sourceCol.appendChild(
+      buildSourceEditor(sourceLabel, {
+        onChange: (v) => {
+          sourceLabel = v || DEFAULT_SOURCE;
+        },
+      }),
+    );
+    fields.appendChild(sourceCol);
+
     const date = field(
       'datetime-local',
       t('nl.field.date'),
@@ -127,7 +142,7 @@ export function openNlModal({ categoryNames, onSaved = null }) {
     fields.appendChild(date.wrap('col-6'));
 
     const notes = field('text', t('nl.field.notes'), draft.notes ?? '');
-    fields.appendChild(notes.wrap('col-6'));
+    fields.appendChild(notes.wrap('col-12'));
 
     body.appendChild(fields);
 
@@ -146,7 +161,7 @@ export function openNlModal({ categoryNames, onSaved = null }) {
         transaction_date: fromDateTimeLocal(date.input.value),
         notes: notes.input.value.trim() || null,
         source_package: 'manual',
-        source_app_label: 'Manual',
+        source_app_label: sourceLabel,
         confidence: 'low',
         status: 'confirmed',
         notification_posted_at: fromDateTimeLocal(date.input.value),

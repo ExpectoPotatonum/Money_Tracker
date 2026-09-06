@@ -218,6 +218,27 @@ test('picking a category on a blank-category row issues a PATCH', async ({ page 
   expect(patched[0].postData).toContain('"category_id":"44444444-4444-4444-8444-444444444444"');
 });
 
+test('edit mode: renaming the source issues a PATCH for that label', async ({ page }) => {
+  const patched = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patched.push({ url: req.url(), postData: req.postData() });
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#edit-mode-toggle');
+  // The Kopitiam row's source is 'TnG eWallet' — not a preset — so its picker
+  // renders with 'Custom…' selected. Switch the select to 'Cash' instead.
+  const row = page.locator('tbody tr', { hasText: 'Kopitiam' });
+  await row.locator('select.source-picker').selectOption('Cash');
+  await page.click('#edit-mode-toggle');
+
+  await expect.poll(() => patched.length).toBe(1);
+  expect(patched[0].url).toContain('transactions');
+  expect(patched[0].postData).toContain('"source_app_label":"Cash"');
+});
+
 test('clicking Delete issues a DELETE for that row', async ({ page }) => {
   let deleted = false;
   page.on('dialog', (dialog) => dialog.accept());
