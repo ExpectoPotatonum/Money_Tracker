@@ -1,4 +1,5 @@
-import { signIn, signUp } from '../api/auth.js';
+import { signIn, signUp, resetPassword } from '../api/auth.js';
+import { t } from '../lib/i18n.js';
 
 export function renderAuthGate(root) {
   root.replaceChildren();
@@ -13,12 +14,12 @@ export function renderAuthGate(root) {
 
   const title = document.createElement('h1');
   title.className = 'h4 mb-1';
-  title.textContent = 'Expense Tracker';
+  title.textContent = t('app.title');
   body.appendChild(title);
 
   const subtitle = document.createElement('p');
   subtitle.className = 'text-muted small mb-3';
-  subtitle.textContent = 'Sign in to see your spending.';
+  subtitle.textContent = t('auth.signinSubtitle');
   body.appendChild(subtitle);
 
   const form = document.createElement('form');
@@ -61,26 +62,46 @@ export function renderAuthGate(root) {
   submit.type = 'submit';
   submit.id = 'auth-submit';
   submit.className = 'btn btn-primary w-100';
-  submit.textContent = 'Sign in';
+  submit.textContent = t('auth.signin');
 
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.id = 'auth-mode-toggle';
   toggle.className = 'btn btn-link w-100 mt-2 small';
-  toggle.textContent = 'No account yet? Create one';
+  toggle.textContent = t('auth.noAccount');
 
-  form.append(emailGroup, passwordGroup, errorDiv, submit, toggle);
+  const forgot = document.createElement('button');
+  forgot.type = 'button';
+  forgot.id = 'auth-forgot';
+  forgot.className = 'btn btn-link btn-sm p-0 mt-2 d-block mx-auto';
+  forgot.textContent = t('auth.forgot');
+
+  form.append(emailGroup, passwordGroup, errorDiv, submit, toggle, forgot);
   body.appendChild(form);
   card.appendChild(body);
 
   let mode = 'signin';
 
-  toggle.addEventListener('click', () => {
-    mode = mode === 'signin' ? 'signup' : 'signin';
-    submit.textContent = mode === 'signin' ? 'Sign in' : 'Create account';
+  function setMode(next) {
+    mode = next;
+    submit.textContent =
+      mode === 'signin' ? t('auth.signin') : mode === 'signup' ? t('auth.signup') : t('auth.reset');
     toggle.textContent =
-      mode === 'signin' ? 'No account yet? Create one' : 'Already have an account? Sign in';
+      mode === 'signin'
+        ? t('auth.noAccount')
+        : mode === 'signup'
+          ? t('auth.alreadyAccount')
+          : t('auth.backToSignin');
+    emailInput.style.display = mode === 'reset' ? 'none' : '';
+    passwordGroup.style.display = mode === 'reset' ? 'none' : '';
+    forgot.style.display = mode === 'signin' ? '' : 'none';
     errorDiv.classList.add('d-none');
+  }
+
+  forgot.addEventListener('click', () => setMode('reset'));
+
+  toggle.addEventListener('click', () => {
+    setMode(mode === 'signin' ? 'signup' : 'signin');
   });
 
   form.addEventListener('submit', async (event) => {
@@ -90,12 +111,17 @@ export function renderAuthGate(root) {
     try {
       if (mode === 'signin') {
         await signIn(emailInput.value.trim(), passwordInput.value);
-      } else {
+      } else if (mode === 'signup') {
         const result = await signUp(emailInput.value.trim(), passwordInput.value);
         if (result?.session === null) {
-          errorDiv.textContent = 'Account created — check your email for a confirmation link.';
+          errorDiv.textContent = t('auth.checkEmail');
           errorDiv.className = 'alert alert-info py-2 small';
         }
+      } else {
+        await resetPassword(emailInput.value.trim());
+        errorDiv.textContent = t('auth.resetSent');
+        errorDiv.className = 'alert alert-info py-2 small';
+        setMode('signin');
       }
     } catch (err) {
       errorDiv.textContent = err.message;

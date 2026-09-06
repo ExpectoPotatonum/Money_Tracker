@@ -26,3 +26,11 @@ export async function getReviewPackages() {
   if (error) throw new Error(error.message);
   return [...new Set((data ?? []).map((r) => r.package_name))];
 }
+
+// After a successful AI escalation (Phase C) the source row is marked parsed
+// so the whole `raw_notifications` audit trail points at the transaction it
+// produced. parse_status check constraint: pending|success|failed|needs_review|ignored.
+export async function updateRawNotification(id, patch) {
+  const { error } = await supabase.from('raw_notifications').update(patch).eq('id', id);
+  if (error) throw new Error(error.message);
+}

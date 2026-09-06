@@ -1,0 +1,206 @@
+import { test, expect } from '@playwright/test';
+
+// Mirrors dashboard.spec.js: supabase storage key derived from the build-time
+// placeholder URL (web.yml) — keep in sync.
+const STORAGE_KEY = 'sb-placeholder-auth-token';
+
+const SESSION = {
+  access_token: 'fake.jwt.token',
+  token_type: 'bearer',
+  expires_in: 3600,
+  expires_at: Math.floor(Date.now() / 1000) + 3600,
+  refresh_token: 'fake-refresh-token',
+  user: {
+    id: '00000000-0000-0000-0000-000000000000',
+    email: 'test@example.com',
+    aud: 'authenticated',
+    role: 'authenticated',
+  },
+};
+
+const CATEGORIES = [
+  { id: '44444444-4444-4444-8444-444444444444', name: 'Shopping' },
+  { id: '11111111-1111-4111-8111-111111111111', name: 'Food & Dining' },
+];
+
+const LLM_JSON = JSON.stringify({
+  usable: true,
+  amount: 45.8,
+  currency: 'MYR',
+  direction: 'debit',
+  merchant_raw: 'Tingkatz',
+  category: 'Food & Dining',
+  transaction_date: '2026-09-06T10:00:00+08:00',
+  notes: null,
+});
+
+// The dashboards fetch categories/currencies/transactions/heartbeat/alerts and
+// hit Frankfurter for FX. The AI specs add the Gemini endpoint and a POST-capable
+// transactions route (insert returns a single row, PATCH/DELETE -> 204).
+function mockSupabase(page, { rawNotifications = [] } = {}) {
+  page.route('**/rest/v1/transactions**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      return route.fulfill({
+        status: 201,
+        json: { id: 'inserted-id' },
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (method === 'PATCH' || method === 'DELETE') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
+  });
+  page.route('**/rest/v1/categories**', (route) =>
+    route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
+  );
+  page.route('**/rest/v1/currencies**', (route) =>
+    route.fulfill({
+      json: [
+        { code: 'MYR', symbol: 'RM', position: 10 },
+        { code: 'USD', symbol: '$', position: 40 },
+      ],
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+  page.route('**/rest/v1/dashboard_alerts**', (route) =>
+    route.fulfill({ json: [], headers: { 'content-type': 'application/json' } }),
+  );
+  page.route('**/rest/v1/device_heartbeat**', (route) =>
+    route.fulfill({
+      json: [
+        {
+          device_id: 'test-device',
+          last_seen_at: new Date().toISOString(),
+          listener_connected: true,
+          notification_access_granted: true,
+          battery_unrestricted: true,
+          app_version: '0.1.0',
+        },
+      ],
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+  page.route('**/rest/v1/raw_notifications**', (route) => {
+    const method = route.request().method();
+    if (method === 'PATCH') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: rawNotifications, headers: { 'content-type': 'application/json' } });
+  });
+  page.route('**/api.frankfurter.dev/**', (route) =>
+    route.fulfill({
+      json: [{ date: '2026-08-28', base: 'USD', quote: 'MYR', rate: 4.5 }],
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+}
+
+function mockLlm(page) {
+  page.route('**/generativelanguage.googleapis.com/**', (route) =>
+    route.fulfill({
+      status: 200,
+      json: {
+        candidates: [{ content: { parts: [{ text: LLM_JSON }] } }],
+      },
+      headers: { 'content-type': 'application/json' },
+    }),
+  );
+}
+
+async function open(page, path = '/', options = {}) {
+  await page.addInitScript(
+    ({ key, session }) => {
+      localStorage.setItem(key, JSON.stringify(session));
+      // Phase A settings (lib/settings.js) so the LLM is "configured": with no
+      // key the parse button routes to the settings hint instead of the API.
+      localStorage.setItem('mt_llm_key', 'fake-key');
+      localStorage.setItem('mt_llm_model', 'gemini-2.0-flash');
+      localStorage.setItem('mt_llm_parse_enabled', '1');
+    },
+    { key: STORAGE_KEY, session: SESSION },
+  );
+  mockSupabase(page, options);
+  mockLlm(page);
+  await page.goto(path);
+}
+
+test('settings dialog opens from the nav and shows the AI fields', async ({ page }) => {
+  await open(page);
+  await page.click('#nav-settings-btn');
+  const dialog = page.locator('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('#settings-ai-key')).toBeVisible();
+  await expect(dialog.locator('#settings-ai-enable')).toBeChecked();
+  await expect(dialog.locator('#settings-lang')).toHaveValue('en');
+});
+
+test('NL bookkeeping: sentence -> AI preview -> insert a manual transaction', async ({ page }) => {
+  const posts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/transactions')) {
+      posts.push(req.postData());
+    }
+  });
+  await open(page);
+
+  await page.click('#nl-add-btn');
+  const dialog = page.locator('dialog');
+  await dialog.locator('textarea').fill('paid RM 45.80 for Tingkatz at the kedai runcit');
+  await page.click('#nl-parse-btn');
+
+  // The AI-parsed preview appears (amount + receiver prefilled).
+  await expect(page.locator('#nl-save-btn')).toBeVisible();
+  await expect(dialog.locator('input[type="number"]')).toHaveValue('45.8');
+
+  await page.click('#nl-save-btn');
+  await expect.poll(() => posts.length).toBe(1);
+  expect(posts[0]).toContain('"amount":45.8');
+  expect(posts[0]).toContain('"direction":"debit"');
+  expect(posts[0]).toContain('"source_package":"manual"');
+  expect(posts[0]).toContain('"confidence":"low"');
+});
+
+test('review inbox: Ask AI escalates a failed row into a linked transaction', async ({ page }) => {
+  const rawNotifications = [
+    {
+      id: 'r-1',
+      client_uuid: 'c-1',
+      package_name: 'com.example.bank',
+      app_label: 'TestBank',
+      title: 'Payment successful',
+      text_body: 'You paid RM 45.80 to Tingkatz',
+      posted_at: new Date(Date.now() - 86_400_000).toISOString(),
+      redactions_applied: [],
+      parse_status: 'failed',
+      parse_error: 'no template matched',
+    },
+  ];
+  await open(page, '/#/review', { rawNotifications });
+
+  await expect(page.locator('#ask-ai-r-1')).toBeVisible();
+  const posts = [];
+  const patches = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/transactions')) {
+      posts.push(req.postData());
+    }
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/raw_notifications')) {
+      patches.push({ url: req.url(), data: req.postData() });
+    }
+  });
+
+  await page.click('#ask-ai-r-1');
+  await expect(page.locator('#ai-apply-btn')).toBeVisible();
+  await page.click('#ai-apply-btn');
+
+  // Inserted transaction links back to the raw row, and the raw row is marked
+  // parsed so it leaves the inbox.
+  await expect.poll(() => posts.length).toBe(1);
+  expect(posts[0]).toContain('"raw_notification_id":"r-1"');
+  expect(posts[0]).toContain('"source_package":"com.example.bank"');
+  await expect.poll(() => patches.length).toBe(1);
+  expect(patches[0].data).toContain('"parse_status":"success"');
+  expect(patches[0].data).toContain('"linked_transaction_id":"inserted-id"');
+});

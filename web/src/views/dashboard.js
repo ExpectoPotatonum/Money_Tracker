@@ -11,6 +11,8 @@ import { convert } from '../utils/fx.js';
 import { formatMoney, setCurrencySymbols } from '../utils/format.js';
 import { alertBanner } from '../components/common.js';
 import { transactionTable } from '../components/transactionTable.js';
+import { openNlModal } from '../components/nlModal.js';
+import { t } from '../lib/i18n.js';
 
 const OFFLINE_AFTER_HOURS = 6;
 
@@ -51,9 +53,7 @@ export async function renderDashboard(root) {
       root.appendChild(
         alertBanner({
           type: 'warning',
-          message:
-            `Tracker may be offline — last heartbeat ${Math.round(hours)}h ago. ` +
-            `Check battery restrictions and notification access (agents.md §10).`,
+          message: t('dash.offlinePrefix') + `${Math.round(hours)}` + t('dash.offlineSuffix'),
         }),
       );
     }
@@ -108,12 +108,18 @@ export async function renderDashboard(root) {
   left.className = 'd-flex align-items-center gap-2';
   const h = document.createElement('h1');
   h.className = 'h3 mb-0';
-  h.textContent = 'Dashboard';
+  h.textContent = t('dash.title');
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.id = 'nl-add-btn';
+  addBtn.className = 'btn btn-sm btn-outline-secondary';
+  addBtn.textContent = t('nl.title');
+  addBtn.addEventListener('click', () => openNlModal({ categoryNames, onSaved: refresh }));
   const editBtn = document.createElement('button');
   editBtn.type = 'button';
   editBtn.id = 'edit-mode-toggle';
   editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
-  editBtn.textContent = editMode ? 'Edit mode: ON' : 'Edit mode';
+  editBtn.textContent = editMode ? t('dash.editModeOn') : t('dash.editMode');
   editBtn.addEventListener('click', async () => {
     if (editMode) {
       // Leaving edit mode persists every pending change; on failure stay in
@@ -122,16 +128,16 @@ export async function renderDashboard(root) {
     } else {
       editMode = true;
     }
-    editBtn.textContent = editMode ? 'Edit mode: ON' : 'Edit mode';
+    editBtn.textContent = editMode ? t('dash.editModeOn') : t('dash.editMode');
     editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
     refresh();
   });
-  left.append(h, editBtn, csvExportBtn(debits, credits, myrTotals, categoryNames));
+  left.append(h, addBtn, editBtn, csvExportBtn(debits, credits, myrTotals, categoryNames));
   const total = document.createElement('div');
   total.className = 'text-end';
   const totalLabel = document.createElement('div');
   totalLabel.className = 'text-muted small';
-  totalLabel.textContent = 'Spent (last 30 days, MYR)';
+  totalLabel.textContent = t('dash.spentLabel');
   const totalValue = document.createElement('div');
   totalValue.id = 'total-myr';
   totalValue.className = 'fs-3 fw-bold';
@@ -144,7 +150,7 @@ export async function renderDashboard(root) {
     root.appendChild(
       alertBanner({
         type: 'info',
-        message: `${skipped} transaction(s) skipped from the MYR total — no rate for that currency.`,
+        message: `${skipped} ${t('dash.skippedSuffix')}`,
       }),
     );
   }
@@ -177,7 +183,7 @@ export async function renderDashboard(root) {
   if (credits.length > 0) {
     const creditHeading = document.createElement('h2');
     creditHeading.className = 'h5 mt-4';
-    creditHeading.textContent = 'Money in';
+    creditHeading.textContent = t('dash.moneyIn');
     root.appendChild(creditHeading);
     root.appendChild(transactionTable({ transactions: credits, ...tableProps }));
   }
@@ -220,7 +226,7 @@ function csvExportBtn(debits, credits, myrTotals, categoryNames) {
   btn.type = 'button';
   btn.className = 'btn btn-sm btn-outline-secondary';
   btn.id = 'csv-export-btn';
-  btn.textContent = 'Export CSV';
+  btn.textContent = t('dash.export');
   btn.addEventListener('click', () => downloadCsv(debits, credits, myrTotals, categoryNames));
   return btn;
 }

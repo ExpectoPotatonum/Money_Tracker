@@ -6,6 +6,7 @@ import {
   currencyOptions,
 } from '../utils/format.js';
 import { confirmDelete } from './common.js';
+import { t as tr } from '../lib/i18n.js';
 
 const DIRECTIONS = ['debit', 'credit'];
 const NOTES_MAX = 255;
@@ -35,13 +36,13 @@ export function transactionTable({
 
   const thead = document.createElement('thead');
   thead.innerHTML = `<tr>
-    <th>Date</th>
-    <th>Receiver</th>
-    <th>Category</th>
-    <th class="text-end">Amount</th>
-    <th class="text-end">MYR</th>
-    <th>Sent from</th>
-    <th>Notes</th>
+    <th>${tr('col.date')}</th>
+    <th>${tr('col.receiver')}</th>
+    <th>${tr('col.category')}</th>
+    <th class="text-end">${tr('col.amount')}</th>
+    <th class="text-end">${tr('col.myr')}</th>
+    <th>${tr('col.sentFrom')}</th>
+    <th>${tr('col.notes')}</th>
     <th></th>
   </tr>`;
   table.appendChild(thead);
@@ -118,7 +119,7 @@ export function transactionTable({
 
   function merchantCell(t) {
     const td = document.createElement('td');
-    const name = t.merchant_display ?? t.merchant_raw ?? 'Unknown';
+    const name = t.merchant_display ?? t.merchant_raw ?? t('col.unknown');
     td.textContent = name;
     if (t.merchant_raw && t.merchant_display && t.merchant_raw !== t.merchant_display) {
       td.title = `matched from: ${t.merchant_raw}`;
@@ -137,10 +138,10 @@ export function transactionTable({
     if (onCategorize) {
       const select = document.createElement('select');
       select.className = 'form-select form-select-sm';
-      select.setAttribute('aria-label', 'Set category');
+      select.setAttribute('aria-label', tr('col.setCategory'));
       const placeholder = document.createElement('option');
       placeholder.value = '';
-      placeholder.textContent = '— Pick…';
+      placeholder.textContent = tr('col.pick');
       select.appendChild(placeholder);
       for (const [id, name] of cats) {
         const opt = document.createElement('option');
@@ -207,7 +208,7 @@ export function transactionTable({
     const raw = document.createElement('input');
     raw.type = 'text';
     raw.className = 'form-control form-control-sm';
-    raw.placeholder = 'Receiver (raw text)';
+    raw.placeholder = tr('col.receiverPlaceholder');
     raw.value = draft.merchant_raw;
     raw.addEventListener('input', () => {
       draft.merchant_raw = raw.value;
@@ -296,7 +297,7 @@ export function transactionTable({
     input.rows = 2;
     input.maxLength = NOTES_MAX;
     input.value = draft.notes;
-    input.placeholder = 'Add a comment…';
+    input.placeholder = tr('col.editNotesPlaceholder');
     input.addEventListener('input', () => {
       // maxLength already hard-stops typing; the slice is the same guard for
       // anything pasting in more than the field allows at once.
@@ -314,8 +315,8 @@ export function transactionTable({
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn btn-sm btn-link p-0 border-0';
-      btn.setAttribute('aria-label', 'Toggle recurring');
-      btn.title = isRecurring ? 'Marked as recurring — click to remove' : 'Mark as recurring';
+      btn.setAttribute('aria-label', tr('col.recurringAdd'));
+      btn.title = isRecurring ? tr('col.recurringRemove') : tr('col.recurringAdd');
       btn.textContent = '🔁';
       btn.style.opacity = isRecurring ? '1' : '0.3';
       btn.style.fontSize = '16px';
@@ -326,8 +327,8 @@ export function transactionTable({
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'btn btn-sm btn-link p-0 border-0';
-      del.setAttribute('aria-label', 'Delete');
-      del.title = 'Delete';
+      del.setAttribute('aria-label', tr('col.delete'));
+      del.title = tr('col.delete');
       const img = document.createElement('img');
       img.src = '/red-cross-mark.png';
       img.alt = '';

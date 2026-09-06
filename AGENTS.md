@@ -41,16 +41,50 @@ Given directly by the project owner. If anything else in this file conflicts wit
 
 ## 3. Repository layout (proposed)
 
-Not yet established — a suggested starting point, change it if something else fits better:
-
 ```
 /android              Kotlin app — listener service, Room DB, WorkManager sync
 /supabase
   /migrations         versioned SQL — the schema in §7 belongs here
   /functions
     /parse-notification   Edge Function — turns raw_notifications rows into transactions
-/web                  static dashboard — Bootstrap, deployed via Netlify
-agent.md              this file
+/web                  static dashboard — Bootstrap, Netlify, vanilla JS SPA (Vite)
+```
+
+### Web app structure (`web/src/`)
+
+```
+api/
+  auth.js            signIn, signUp, signOut, resetPassword, updatePassword
+  transactions.js    get, insert, update, delete
+  reviewInbox.js     getReviewInbox, getReviewPackages, updateRawNotification
+  currencies.js      getCurrencies
+  heartbeat.js       getLatestHeartbeat
+  alerts.js          getOpenAlerts, dismissAlert
+components/
+  common.js          alertBanner, badge, emptyState, confirmDelete, openModal (<dialog>)
+  nlModal.js         "Add from text" dialog — sentence → AI preview → manual insert
+  settingsDialog.js  LLM key/model, language selector, change password
+  transactionTable.js  Transaction table (read-only + edit-mode cells)
+lib/
+  i18n.js            t() function — en/zh-CN dictionary, locale from localStorage
+  logger.js          IndexedDB-backed error log with rotation
+  settings.js        getSettings/saveSettings — LLM key, model, lang, AI toggle
+  supabaseClient.js  createClient singleton
+utils/
+  ai.js              parseTransactionText, parseNotificationTransaction — orchestrates prompt → LLM → parse → normalise
+  fx.js              Frankfurter historical-at-date conversion (ADRs 0001/0003)
+  format.js          formatMoney, formatDateTime, currencyOptions
+  json5.js           extractJsonObject — tolerant JSON extraction from LLM output
+  llm.js             callLlm — Gemini flash wrapper, in-flight dedupe, timeout → null
+  prompts.js         buildNlPrompt, buildEscalationPrompt — context-injected prompts
+views/
+  authGate.js        Sign-in / sign-up / forgot-password forms
+  dashboard.js       Main transaction list, edit mode, CSV export, NL "Add from text"
+  reviewInbox.js     Failed/needs_review rows + per-row Ask AI escalation
+tests/
+  ai.spec.js         Playwright: settings dialog, NL add, review-inbox escalation
+  auth.spec.js       Playwright: auth gate rendering
+  dashboard.spec.js  Playwright: transaction list, edit mode, heartbeat banner
 ```
 
 ## 4. Tech stack
@@ -72,6 +106,8 @@ Concretely:
 - **Queued, idempotent sync** — every captured row gets a `client_uuid` generated on-device at capture time; syncing is an upsert on that key, so a retry after a partial failure can't create a duplicate.
 
 Everything else in this file follows from these three sentences.
+
+A fourth path — **manual NL entry** (Phase B, web) — writes a `transactions` row with `source_package = 'manual'` and no `raw_notifications` link. These rows are `confidence: 'low'` by design (no notification cross-check) and carry a schema check constraint enforcing the invariant: a manual row has `raw_notification_id = NULL`; a notification-derived row must not claim to be manual.
 
 ## 6. Data flow
 

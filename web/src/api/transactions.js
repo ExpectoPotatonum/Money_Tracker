@@ -35,6 +35,16 @@ export async function updateTransaction(id, patch) {
   if (error) throw new Error(error.message);
 }
 
+// Manual quick-add / AI-escalation rows (Phase B/C). Requires the
+// 202609060003 migration: raw_notification_id nullable for source_package =
+// 'manual' rows; other sources must carry a raw_notification_id (schema
+// check). The authenticated role has INSERT under the owner_only RLS policy.
+export async function insertTransaction(row) {
+  const { data, error } = await supabase.from('transactions').insert(row).select('id').single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function deleteTransaction(id) {
   const { error } = await supabase.from('transactions').delete().eq('id', id);
   if (error) throw new Error(error.message);
