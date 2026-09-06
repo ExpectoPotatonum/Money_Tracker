@@ -8,7 +8,7 @@ const KEYS = {
   lang: 'mt_lang',
 };
 
-export const DEFAULT_MODEL = 'gemini-2.0-flash';
+export const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export function getSettings() {
   return {

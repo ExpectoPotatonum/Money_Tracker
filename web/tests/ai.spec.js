@@ -97,13 +97,15 @@ function mockSupabase(page, { rawNotifications = [] } = {}) {
   );
 }
 
-function mockLlm(page) {
+function mockLlm(page, { status = 200 } = {}) {
+  const okBody = {
+    candidates: [{ content: { parts: [{ text: LLM_JSON }] } }],
+  };
+  const errBody = { error: { message: 'models/gemini-2.0-flash is not found' } };
   page.route('**/generativelanguage.googleapis.com/**', (route) =>
     route.fulfill({
-      status: 200,
-      json: {
-        candidates: [{ content: { parts: [{ text: LLM_JSON }] } }],
-      },
+      status,
+      json: status === 200 ? okBody : errBody,
       headers: { 'content-type': 'application/json' },
     }),
   );
@@ -122,7 +124,7 @@ async function open(page, path = '/', options = {}) {
     { key: STORAGE_KEY, session: SESSION },
   );
   mockSupabase(page, options);
-  mockLlm(page);
+  mockLlm(page, options.llm ?? {});
   await page.goto(path);
 }
 
@@ -160,6 +162,23 @@ test('NL bookkeeping: sentence -> AI preview -> insert a manual transaction', as
   expect(posts[0]).toContain('"direction":"debit"');
   expect(posts[0]).toContain('"source_package":"manual"');
   expect(posts[0]).toContain('"confidence":"low"');
+});
+
+test('LLM model 404 shows a diagnostic instead of the generic parse failure', async ({ page }) => {
+  await open(page, '/', { llm: { status: 404 } });
+
+  await page.click('#nl-add-btn');
+  const dialog = page.locator('dialog');
+  await dialog.locator('textarea').fill('paid rm50 for koayiaoteng at 7village');
+  await page.click('#nl-parse-btn');
+
+  // The 404 (with the auto-fallback retry exhausted) surfaces as "model
+  // unavailable", the sentence is never blamed, and the button stays retryable.
+  await expect(dialog.locator('.text-danger')).toContainText('404');
+  await expect(dialog.locator('.text-danger')).toContainText(
+    'Settings',
+  );
+  await expect(page.locator('#nl-parse-btn')).toBeEnabled();
 });
 
 test('review inbox: Ask AI escalates a failed row into a linked transaction', async ({ page }) => {

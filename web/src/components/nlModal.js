@@ -1,5 +1,5 @@
 import { openModal } from './common.js';
-import { parseTransactionText } from '../utils/ai.js';
+import { parseTransactionText, llmErrorMessage } from '../utils/ai.js';
 import { insertTransaction } from '../api/transactions.js';
 import { toDateTimeLocal, fromDateTimeLocal, currencyOptions } from '../utils/format.js';
 import { llmConfigured } from '../utils/llm.js';
@@ -59,11 +59,21 @@ export function openNlModal({ categoryNames, onSaved = null }) {
     status.textContent = t('nl.parsing');
     status.classList.remove('text-danger');
 
-    const draft = await parseTransactionText(text.value.trim(), categoryNames);
-    if (!draft) {
+    const { draft, error } = await parseTransactionText(text.value.trim(), categoryNames);
+    if (error) {
       parseBtn.disabled = false;
-      status.textContent = t('nl.failed');
       status.classList.add('text-danger');
+      if (error.code === 'llm') {
+        status.textContent = llmErrorMessage(error);
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'btn btn-link btn-sm p-0 ms-2';
+        go.textContent = t('nav.settings');
+        go.addEventListener('click', () => openSettings());
+        status.appendChild(go);
+      } else {
+        status.textContent = t('nl.failed');
+      }
       return;
     }
     status.classList.remove('text-danger');

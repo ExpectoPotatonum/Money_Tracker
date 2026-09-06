@@ -1,10 +1,12 @@
 // Orchestration: context-injected prompt -> LLM -> tolerant JSON parse ->
-// normalized transaction draft. Pure of any UI. Returns null when the text was
-// noise, the model replied nonsense, or no usable transaction was extracted.
+// normalized transaction draft. Pure of any UI. Returns { draft, error } so
+// callers can tell "LLM never answered" (surfaced as a diagnostic) apart from
+// "LLM answered but no usable transaction" (the existing gentle reword prompt).
 import { callLlm } from './llm.js';
 import { extractJsonObject } from './json5.js';
 import { buildNlPrompt, buildEscalationPrompt } from './prompts.js';
 import { currencyOptions } from './format.js';
+import { t } from '../lib/i18n.js';
 
 const DIRECTIONS = new Set(['debit', 'credit']);
 
@@ -45,15 +47,43 @@ function normalize(raw, categoryNames) {
   };
 }
 
+// Localized failure text for a { code, kind } error from the functions below.
+// 'notransaction' keeps the gentle generic wording; 'llm' failures are specific
+// so a dead model or quota doesn't look like a wording problem.
+export function llmErrorMessage(error) {
+  if (error?.code !== 'llm') return t('nl.failed');
+  const key =
+    error.kind === 'network' || error.kind === 'config'
+      ? 'ai.error.network'
+      : error.kind === 'model'
+        ? 'ai.error.model'
+        : error.kind === 'quota'
+          ? 'ai.error.quota'
+          : error.kind === 'empty'
+            ? 'ai.error.empty'
+            : 'ai.error.generic';
+  return t(key).replace('{status}', String(error.status ?? ''));
+}
+
 // NL bookkeeping (Phase B): a freeform sentence -> one transaction.
 export async function parseTransactionText(userText, categoryNames) {
   const prompt = buildNlPrompt(userText, [...categoryNames.values()], currencyOptions());
-  return normalize(extractJsonObject(await callLlm(prompt)), categoryNames);
+  const res = await callLlm(prompt);
+  if (!res.ok) return { draft: null, error: { code: 'llm', ...res } };
+  const draft = normalize(extractJsonObject(res.text), categoryNames);
+  return draft
+    ? { draft, error: null }
+    : { draft: null, error: { code: 'notransaction' } };
 }
 
 // Review-inbox escalation (Phase C): a failed/needs_review raw_notifications
-// row -> a transaction (or null when the LLM deems it noise).
+// row -> a transaction (or an error when the LLM itself failed to answer).
 export async function parseNotificationTransaction(row, categoryNames) {
   const prompt = buildEscalationPrompt(row, [...categoryNames.values()], currencyOptions());
-  return normalize(extractJsonObject(await callLlm(prompt)), categoryNames);
+  const res = await callLlm(prompt);
+  if (!res.ok) return { draft: null, error: { code: 'llm', ...res } };
+  const draft = normalize(extractJsonObject(res.text), categoryNames);
+  return draft
+    ? { draft, error: null }
+    : { draft: null, error: { code: 'notransaction' } };
 }

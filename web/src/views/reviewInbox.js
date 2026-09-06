@@ -1,7 +1,7 @@
 import { getReviewInbox, updateRawNotification } from '../api/reviewInbox.js';
 import { getCategories, insertTransaction } from '../api/transactions.js';
 import { formatMoney, formatDateTime } from '../utils/format.js';
-import { parseNotificationTransaction } from '../utils/ai.js';
+import { parseNotificationTransaction, llmErrorMessage } from '../utils/ai.js';
 import { llmConfigured } from '../utils/llm.js';
 import { badge, emptyState, openModal } from '../components/common.js';
 import { t } from '../lib/i18n.js';
@@ -144,14 +144,16 @@ function askAiCell(row, categoryNames, root, filterStatus) {
     btn.disabled = true;
     btn.textContent = '…';
 
-    const draft = await parseNotificationTransaction(row, categoryNames);
-    if (!draft) {
+    const { draft, error } = await parseNotificationTransaction(row, categoryNames);
+    if (error) {
       btn.disabled = false;
       btn.textContent = t('inbox.askAi');
-      // Show the 'no usable transaction' verdict, then make the button retryable.
+      // LLM failure gets a specific diagnostic; 'no usable transaction' keeps
+      // the quiet "skipped" verdict. Either way the button becomes retryable.
       const verdict = document.createElement('span');
-      verdict.className = 'small text-muted d-block';
-      verdict.textContent = t('inbox.aiSkipped');
+      verdict.className = `small d-block ${error.code === 'llm' ? 'text-danger' : 'text-muted'}`;
+      verdict.textContent =
+        error.code === 'llm' ? llmErrorMessage(error) : t('inbox.aiSkipped');
       td.replaceChildren(verdict, btn);
       return;
     }

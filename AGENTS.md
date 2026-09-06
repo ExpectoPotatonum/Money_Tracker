@@ -75,7 +75,7 @@ utils/
   fx.js              Frankfurter historical-at-date conversion (ADRs 0001/0003)
   format.js          formatMoney, formatDateTime, currencyOptions
   json5.js           extractJsonObject — tolerant JSON extraction from LLM output
-  llm.js             callLlm — Gemini flash wrapper, in-flight dedupe, timeout → null
+  llm.js             callLlm — Gemini flash wrapper, structured { ok, kind, status } result, dead-model 404 auto-fallback to DEFAULT_MODEL, in-flight dedupe
   prompts.js         buildNlPrompt, buildEscalationPrompt — context-injected prompts
 views/
   authGate.js        Sign-in / sign-up / forgot-password forms
