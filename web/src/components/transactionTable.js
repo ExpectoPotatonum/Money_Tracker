@@ -14,9 +14,11 @@ const NOTES_MAX = 255;
  * Renders the transactions table. In edit mode every data cell becomes an
  * editable control; changes are reported via `onDirty(id, patch)` and saved
  * by the view when edit mode is toggled off (no per-row Save buttons). Delete
- * is the only per-row action. Cell values are rendered via textContent
- * (untrusted-notification-input convention) — only the form controls the user
- * interacts with use inputs.
+ * is the only per-row action. In read-only mode, rows with no category show an
+ * inline picker instead of the em-dash; choosing one fires
+ * `onCategorize(id, categoryId)` for an immediate save. Cell values are
+ * rendered via textContent (untrusted-notification-input convention) — only
+ * the form controls the user interacts with use inputs.
  */
 export function transactionTable({
   transactions,
@@ -26,6 +28,7 @@ export function transactionTable({
   onDirty = null,
   onDelete = null,
   onToggleRecurring = null,
+  onCategorize = null,
 }) {
   const table = document.createElement('table');
   table.className = 'table table-sm table-striped align-middle';
@@ -125,7 +128,33 @@ export function transactionTable({
 
   function categoryCell(t, cats) {
     const td = document.createElement('td');
-    td.textContent = (t.category_id && cats.get(t.category_id)) || '—';
+    if (t.category_id && cats.get(t.category_id)) {
+      td.textContent = cats.get(t.category_id);
+      return td;
+    }
+    // No category: render an inline picker (read-only mode only) so the user
+    // can set one without opening edit mode. Saves immediately via onCategorize.
+    if (onCategorize) {
+      const select = document.createElement('select');
+      select.className = 'form-select form-select-sm';
+      select.setAttribute('aria-label', 'Set category');
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = '— Pick…';
+      select.appendChild(placeholder);
+      for (const [id, name] of cats) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = name;
+        select.appendChild(opt);
+      }
+      select.addEventListener('change', () => {
+        if (select.value) onCategorize(t.id, select.value);
+      });
+      td.appendChild(select);
+    } else {
+      td.textContent = '—';
+    }
     return td;
   }
 

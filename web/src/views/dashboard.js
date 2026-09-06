@@ -165,6 +165,12 @@ export async function renderDashboard(root) {
       await updateTransaction(id, { is_recurring: value });
       refresh();
     },
+    // Blank-category rows show an inline picker (read-only mode); a choice
+    // PATCHes that row immediately, like the recurring toggle.
+    onCategorize: async (id, categoryId) => {
+      await updateTransaction(id, { category_id: categoryId });
+      refresh();
+    },
   };
   root.appendChild(transactionTable({ transactions: debits, ...tableProps }));
 

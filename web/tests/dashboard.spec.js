@@ -196,6 +196,28 @@ test('toggling edit mode off issues a PATCH for every edited row', async ({ page
   expect(patched[0].postData).toContain('"amount":99');
 });
 
+test('picking a category on a blank-category row issues a PATCH', async ({ page }) => {
+  const patched = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patched.push({ url: req.url(), postData: req.postData() });
+    }
+  });
+  await openDashboard(page);
+
+  // The Netflix row has category_id: null, so its category cell renders an
+  // inline picker instead of the em-dash.
+  const picker = page
+    .locator('tbody tr', { hasText: 'Netflix' })
+    .locator('select[aria-label="Set category"]');
+  await expect(picker).toHaveCount(1);
+  await picker.selectOption('44444444-4444-4444-8444-444444444444');
+
+  await expect.poll(() => patched.length).toBe(1);
+  expect(patched[0].url).toContain('transactions');
+  expect(patched[0].postData).toContain('"category_id":"44444444-4444-4444-8444-444444444444"');
+});
+
 test('clicking Delete issues a DELETE for that row', async ({ page }) => {
   let deleted = false;
   page.on('dialog', (dialog) => dialog.accept());
