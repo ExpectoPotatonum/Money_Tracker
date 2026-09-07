@@ -130,8 +130,13 @@ export function transactionTable({
 
   function merchantCell(t) {
     const td = document.createElement('td');
-    const name = formatMerchantName(t.merchant_display ?? t.merchant_raw ?? t('col.unknown'));
-    td.textContent = name;
+    // Prefer the raw "Name/Bank" text when it carries a '/' combo (CIMB
+    // DuitNow person+source-bank format): render it as "Name - Bank". Otherwise
+    // fall back to the normalized display name. Edit mode still edits raw.
+    const display = (t.merchant_raw && t.merchant_raw.includes('/'))
+      ? formatMerchantName(t.merchant_raw)
+      : (t.merchant_display ?? t.merchant_raw ?? t('col.unknown'));
+    td.textContent = display;
     if (t.merchant_raw && t.merchant_display && t.merchant_raw !== t.merchant_display) {
       td.title = `matched from: ${t.merchant_raw}`;
     }
