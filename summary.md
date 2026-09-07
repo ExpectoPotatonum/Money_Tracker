@@ -88,7 +88,7 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 ## Verification status
 | Subsystem | Result |
 |---|---|
-| Capture → sync → parse → display | ✅ verified live (TnG + CIMB) |
+| Capture → sync → parse → display | ✅ verified live (TnG, CIMB, Wise) |
 | TnG outbound + Samsung merchant/category parse | ✅ re-parsed, merchants/categories resolved — except one Samsung row still showing Sent from "Samsung Wallet" pending the targeted re-run in §What's next |
 | Web: auth gate | ✅ email/password sign-in + sign-up with email confirmation |
 | Web: dashboard (read-only) | ✅ debits/credits split, MYR FX conversion (frozen at transaction date), heartbeat banner, alert banners, currency symbols from DB |
@@ -102,7 +102,7 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
 
 ## What's next
 1. **Targeted Samsung re-parse** so Sent from renders "Samsung Wallet - HLB Debit Card": `update raw_notifications set parse_status='pending' where linked_transaction_id='0316042e-2c2e-4a81-90cf-974069c267f2'; select backfill_resync();` (the row is now `success`, so `backfill_resync()` won't pick it up automatically).
-2. **More parser templates / more apps** — only TnG + CIMB are live. Adding banks/wallets needs **real captured samples first** (AGENTS.md §14 rollout) — the next real-world gap.
+2. **More parser templates / more apps** — TnG, CIMB, and Wise are live. Wise uses amount-first format (`25.90 MYR spent at Apple`), which the loose fallback missed; a Wise v1 template was added (migration `202609080001`). Adding more banks/wallets still needs real captured samples first (AGENTS.md §14 rollout).
 3. **Validate the redaction regex library** (§8) against real samples — still an open TODO.
 4. **Regression-test harness for `parser_templates`** (§9) — script the "replay vs `sample_input`" step once there are more templates.
 5. **Still-later scope (deferred by design)** — budgets, subscription auto-detection, PWA install, chart library. (Manual recurring flagging, CSV export, and FX polish are done.) Budget/trend views inherit the frozen-at-transaction-date FX (ADR 0003) automatically.
