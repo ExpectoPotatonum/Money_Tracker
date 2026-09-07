@@ -229,9 +229,14 @@ test('edit mode: renaming the source issues a PATCH for that label', async ({ pa
 
   await page.click('#edit-mode-toggle');
   // The Kopitiam row's source is 'TnG eWallet' — not a preset — so its picker
-  // renders with 'Custom…' selected. Switch the select to 'Cash' instead.
-  const row = page.locator('tbody tr', { hasText: 'Kopitiam' });
-  await row.locator('select.source-picker').selectOption('Cash');
+  // renders a pre-filled Custom… text input; rename it to Cash. Scope to the
+  // row whose receiver is 'kopitiam'.
+  const row = page
+    .locator('tbody tr')
+    .filter({ has: page.locator('input[value="kopitiam"]') });
+  const custom = row.locator('input.source-picker-custom');
+  await expect(custom).toBeVisible();
+  await custom.fill('Cash');
   await page.click('#edit-mode-toggle');
 
   await expect.poll(() => patched.length).toBe(1);
