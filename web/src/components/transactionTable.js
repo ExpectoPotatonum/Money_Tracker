@@ -13,6 +13,15 @@ const DIRECTIONS = ['debit', 'credit'];
 const NOTES_MAX = 255;
 
 /**
+ * Render merchant name for display: convert "Name/Bank" → "Name - Bank".
+ * The slash format comes from CIMB DuitNow notifications (merchant_raw).
+ */
+function formatMerchantName(name) {
+  if (!name || !name.includes('/')) return name;
+  return name.replace('/', ' - ');
+}
+
+/**
  * Renders the transactions table. In edit mode every data cell becomes an
  * editable control; changes are reported via `onDirty(id, patch)` and saved
  * by the view when edit mode is toggled off (no per-row Save buttons). Delete
@@ -121,7 +130,7 @@ export function transactionTable({
 
   function merchantCell(t) {
     const td = document.createElement('td');
-    const name = t.merchant_display ?? t.merchant_raw ?? t('col.unknown');
+    const name = formatMerchantName(t.merchant_display ?? t.merchant_raw ?? t('col.unknown'));
     td.textContent = name;
     if (t.merchant_raw && t.merchant_display && t.merchant_raw !== t.merchant_display) {
       td.title = `matched from: ${t.merchant_raw}`;
