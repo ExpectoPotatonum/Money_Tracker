@@ -113,15 +113,44 @@ function mockLlm(page, { status = 200 } = {}) {
 
 async function open(page, path = '/', options = {}) {
   await page.addInitScript(
-    ({ key, session }) => {
+    ({ key, session, speech }) => {
       localStorage.setItem(key, JSON.stringify(session));
       // Phase A settings (lib/settings.js) so the LLM is "configured": with no
       // key the parse button routes to the settings hint instead of the API.
       localStorage.setItem('mt_llm_key', 'fake-key');
       localStorage.setItem('mt_llm_model', 'gemini-2.0-flash');
       localStorage.setItem('mt_llm_parse_enabled', '1');
+      if (speech) {
+        // Minimal stand-in for the Web Speech API so the mic button shows and
+        // can be driven: start() schedules a scripted transcription.
+        class FakeSR {
+          constructor() {
+            this.lang = '';
+            this.interimResults = false;
+            this.maxAlternatives = 1;
+            this.onresult = null;
+            this.onend = null;
+            this.onerror = null;
+            this.onstart = null;
+          }
+          start() {
+            this.onstart?.();
+            setTimeout(() => {
+              if (this.onresult) {
+                this.onresult({ results: [{ 0: { transcript: speech }, isFinal: true }] });
+              }
+              this.onend?.();
+            }, 10);
+          }
+          stop() {
+            this.onend?.();
+          }
+        }
+        window.SpeechRecognition = FakeSR;
+        window.webkitSpeechRecognition = FakeSR;
+      }
     },
-    { key: STORAGE_KEY, session: SESSION },
+    { key: STORAGE_KEY, session: SESSION, speech: options.speech ?? null },
   );
   mockSupabase(page, options);
   mockLlm(page, options.llm ?? {});
@@ -204,6 +233,19 @@ test('LLM model 404 shows a diagnostic instead of the generic parse failure', as
     'Settings',
   );
   await expect(page.locator('#nl-parse-btn')).toBeEnabled();
+});
+
+test('voice input transcribes into the NL textarea', async ({ page }) => {
+  await open(page, '/', { speech: 'paid 12 for kopitiam' });
+
+  await page.click('#nl-add-btn');
+  const dialog = page.locator('dialog');
+  const mic = dialog.locator('#nl-voice-btn');
+  await expect(mic).toBeVisible();
+  await mic.click();
+
+  // The fake SpeechRecognition appends its transcript to the textarea.
+  await expect(dialog.locator('textarea')).toHaveValue('paid 12 for kopitiam');
 });
 
 test('review inbox: Ask AI escalates a failed row into a linked transaction', async ({ page }) => {

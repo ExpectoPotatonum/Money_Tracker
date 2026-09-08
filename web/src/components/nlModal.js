@@ -6,8 +6,92 @@ import { buildSourceEditor, DEFAULT_SOURCE } from '../utils/sources.js';
 import { llmConfigured } from '../utils/llm.js';
 import { openSettings } from './settingsDialog.js';
 import { t } from '../lib/i18n.js';
+import { getSettings } from '../lib/settings.js';
 
 const DIRECTIONS = ['debit', 'credit'];
+
+// Click-to-talk voice input (Phase F web half). Wraps the Web Speech API and
+// is a no-op when unsupported (the button stays hidden). Tapping starts the
+// recognizer; tapping again (or silence) stops it; transcripts append to the
+// target textarea so the user can edit before parsing.
+function hookUpVoice({ text, status, lang }) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const voiceBtn = document.getElementById('nl-voice-btn');
+  if (!SR || !voiceBtn) return;
+  voiceBtn.classList.remove('d-none');
+
+  let rec = null;
+
+  function setRecording(on) {
+    voiceBtn.classList.toggle('btn-danger', on);
+    voiceBtn.classList.toggle('btn-outline-secondary', !on);
+    voiceBtn.querySelector('.mic-glyph').textContent = on ? '⏹' : '🎤';
+    if (on) {
+      status.textContent = t('nl.voice.recording');
+      status.classList.remove('text-danger');
+    } else {
+      status.textContent = '';
+    }
+  }
+
+  function start() {
+    const r = new SR();
+    r.lang = lang === 'zh' ? 'zh-CN' : 'en-MY';
+    r.interimResults = false;
+    r.maxAlternatives = 1;
+
+    r.onresult = (e) => {
+      const said = Array.from(e.results)
+        .map((res) => res[0].transcript)
+        .join(' ');
+      text.value = (text.value.trim() ? text.value.trim() + ' ' : '') + said.trim();
+    };
+    r.onerror = (e) => {
+      setRecording(false);
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        status.textContent = t('nl.voice.denied');
+      } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+        status.textContent = t('nl.voice.error');
+      } else {
+        status.textContent = '';
+      }
+      status.classList.add('text-danger');
+    };
+    r.onend = () => {
+      setRecording(false);
+      rec = null;
+    };
+    r.onstart = () => setRecording(true);
+
+    rec = r;
+    try {
+      r.start();
+    } catch {
+      setRecording(false);
+      rec = null;
+    }
+  }
+
+  function stop() {
+    if (rec) {
+      try {
+        rec.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    rec = null;
+    setRecording(false);
+  }
+
+  voiceBtn.addEventListener('click', () => {
+    if (rec) {
+      stop();
+    } else {
+      start();
+    }
+  });
+}
 
 // Phase B — NL bookkeeping. Freeform sentence -> AI-parsed preview -> insert a
 // manual transaction (source_package 'manual', no raw_notifications link —
@@ -23,9 +107,28 @@ export function openNlModal({ categoryNames, onSaved = null }) {
   text.required = true;
   body.appendChild(text);
 
+  // Click-to-talk voice input (hidden when the browser has no Web Speech API).
+  const micWrap = document.createElement('div');
+  micWrap.className = 'mt-2';
+  const voiceBtn = document.createElement('button');
+  voiceBtn.type = 'button';
+  voiceBtn.id = 'nl-voice-btn';
+  voiceBtn.className = 'btn btn-outline-secondary btn-sm d-none';
+  voiceBtn.title = t('nl.voice');
+  voiceBtn.setAttribute('aria-label', t('nl.voice'));
+  const glyph = document.createElement('span');
+  glyph.className = 'mic-glyph';
+  glyph.textContent = '🎤';
+  voiceBtn.appendChild(glyph);
+  micWrap.appendChild(voiceBtn);
+  body.appendChild(micWrap);
+
   const status = document.createElement('div');
   status.className = 'small text-muted mt-2';
   body.appendChild(status);
+
+  const isZh = getSettings().lang === 'zh';
+  hookUpVoice({ text, status, lang: isZh ? 'zh' : 'en' });
 
   const parseBtn = document.createElement('button');
   parseBtn.type = 'button';
