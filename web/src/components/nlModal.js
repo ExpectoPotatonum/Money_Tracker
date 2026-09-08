@@ -47,13 +47,15 @@ function hookUpVoice({ text, status, lang }) {
     // Remember what was already typed so the first spoken result replaces the
     // recording start point, never appending to itself.
     baseText = text.value.trim();
-    let interim = '';
 
     // Each result event carries the *cumulative* transcripts for this session.
     // We render final segments plus the current interim, replacing the interim
     // on every event, so text never double-accumulates.
     r.onresult = (e) => {
       const finals = [];
+      // Interim is recomputed from scratch per event — never persisted across
+      // events, so a superseded partial can't leak into a later final result.
+      let interim = '';
       for (let i = 0; i < e.results.length; i++) {
         const alt = e.results[i][0];
         if (e.results[i].isFinal) {
