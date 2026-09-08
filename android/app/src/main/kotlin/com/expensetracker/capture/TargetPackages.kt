@@ -19,5 +19,6 @@ object TargetPackages {
         "com.eg.android.AlipayGphone", // Alipay
         "com.google.android.apps.walletnfcrel", // Google Wallet
         "com.samsung.android.spay", // Samsung Wallet / Pay
+        "my.com.hongleongconnect.mobileconnect", // Hong Leong Bank (HLB Connect)
     )
 }
