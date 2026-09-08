@@ -21,6 +21,7 @@ function hookUpVoice({ text, status, lang }) {
   voiceBtn.classList.remove('d-none');
 
   let rec = null;
+  let baseText = '';
 
   function setRecording(on) {
     voiceBtn.classList.toggle('btn-danger', on);
@@ -36,15 +37,33 @@ function hookUpVoice({ text, status, lang }) {
 
   function start() {
     const r = new SR();
-    r.lang = lang === 'zh' ? 'zh-CN' : 'en-MY';
-    r.interimResults = false;
-    r.maxAlternatives = 1;
+    // en-MY is often unmapped in Chrome's recognizer and degrades to gibberish;
+    // en-US is the most robust English model. zh-CN for the Chinese UI.
+    r.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
+    r.interimResults = true; // live-refresh the interim text
+    r.continuous = true;
+    r.maxAlternatives = 3;
 
+    // Remember what was already typed so the first spoken result replaces the
+    // recording start point, never appending to itself.
+    baseText = text.value.trim();
+    let interim = '';
+
+    // Each result event carries the *cumulative* transcripts for this session.
+    // We render final segments plus the current interim, replacing the interim
+    // on every event, so text never double-accumulates.
     r.onresult = (e) => {
-      const said = Array.from(e.results)
-        .map((res) => res[0].transcript)
-        .join(' ');
-      text.value = (text.value.trim() ? text.value.trim() + ' ' : '') + said.trim();
+      const finals = [];
+      for (let i = 0; i < e.results.length; i++) {
+        const alt = e.results[i][0];
+        if (e.results[i].isFinal) {
+          finals.push(alt.transcript.trim());
+        } else {
+          interim = alt.transcript.trim();
+        }
+      }
+      const spoken = finals.join(' ');
+      text.value = [baseText, spoken, interim].filter(Boolean).join(' ');
     };
     r.onerror = (e) => {
       setRecording(false);

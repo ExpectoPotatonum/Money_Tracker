@@ -122,25 +122,36 @@ async function open(page, path = '/', options = {}) {
       localStorage.setItem('mt_llm_parse_enabled', '1');
       if (speech) {
         // Minimal stand-in for the Web Speech API so the mic button shows and
-        // can be driven: start() schedules a scripted transcription.
+        // can be driven. start() replays the real shape: an interim (live)
+        // result first, then the committed final result, so the test verifies
+        // the UI replaces rather than appends (no doubling).
+        const phrases = speech;
         class FakeSR {
           constructor() {
             this.lang = '';
             this.interimResults = false;
+            this.continuous = false;
             this.maxAlternatives = 1;
             this.onresult = null;
             this.onend = null;
             this.onerror = null;
             this.onstart = null;
           }
+          emit(results) {
+            this.onresult?.({ results });
+          }
           start() {
             this.onstart?.();
+            // 1) interim partial, 2) committed final phrase.
             setTimeout(() => {
-              if (this.onresult) {
-                this.onresult({ results: [{ 0: { transcript: speech }, isFinal: true }] });
-              }
-              this.onend?.();
+              this.emit([
+                { 0: { transcript: phrases.slice(0, 8), isFinal: false } },
+              ]);
             }, 10);
+            setTimeout(() => {
+              this.emit([{ 0: { transcript: phrases }, isFinal: true }]);
+              this.onend?.();
+            }, 20);
           }
           stop() {
             this.onend?.();
