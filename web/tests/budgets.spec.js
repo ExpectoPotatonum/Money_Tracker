@@ -177,14 +177,15 @@ test('dashboard renders inline budget bars with roll-up and over-budget state', 
   await expect(section).toContainText('Food & Dining');
 
   // Overall (b-1) is first in the list: 550 spent of 500 → over budget.
+  // Browsers serialize inline styles with a trailing ';' — match with a regex.
   const overall = section.locator('div.mb-3', { hasText: 'Overall' });
-  await expect(overall.locator('.progress-bar')).toHaveAttribute('style', 'width: 100%');
+  await expect(overall.locator('.progress-bar')).toHaveAttribute('style', /width:\s*100%/);
   await expect(overall.locator('.progress-bar.bg-danger')).toHaveCount(1);
   await expect(overall.locator('.text-danger')).toContainText('RM 550.00 / RM 500.00');
 
   // Food & Dining (b-2) second: 150 of 200 (child spend rolled up) → 75%.
   const food = section.locator('div.mb-3', { hasText: 'Food & Dining' });
-  await expect(food.locator('.progress-bar')).toHaveAttribute('style', 'width: 75%');
+  await expect(food.locator('.progress-bar')).toHaveAttribute('style', /width:\s*75%/);
   await expect(food.locator('.bg-danger')).toHaveCount(0);
   await expect(food).toContainText('RM 150.00 / RM 200.00');
 });
