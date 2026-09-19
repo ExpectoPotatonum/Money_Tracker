@@ -767,7 +767,7 @@ in the trigger (see above). Re-running is safe: maps are stable, new captures ju
 > §4.8.4) — every half is a normal single-account row, so Phase 4 balance stays a plain SUM and
 > transfer halves are correctly excluded from the dashboard's Unassigned list.
 >
-> **BUILD STATUS — 2026-09-19, gate passed, awaiting owner commit/push.**
+> **BUILD STATUS — 2026-09-19, gate passed.**
 > - ✅ **lint** clean · ✅ **build** (vite) clean · ✅ **e2e 28/28** (Playwright) — incl. the new
 >   Phase 3 specs: read-only account names + inline "-- Pick…" picker for unassigned rows, edit-mode
 >   account PATCH, transfer halves in their own A→B section that never move the totals, transfer
@@ -778,8 +778,15 @@ in the trigger (see above). Re-running is safe: maps are stable, new captures ju
 >   `202609190002_accounts.sql` — `alter table transactions add column account_id uuid references
 >   accounts(id);` before the index. The e2e suite mocks the Supabase REST layer, so a real-DB apply
 >   was what surfaced it; a DB smoke test would be a good permanent gate.
-> - State: **local commit only — NOT pushed until the owner says so.** The fixed migrations still need
->   applying to Supabase (cleanup + 002→003→004 if a failed run left partial artifacts).
+> - ✅ **Committed & pushed** as `ff4a015` (main) per owner decision 2026-09-19.
+> - ✅ **Applied to Supabase by owner 2026-09-19** (002 → 003 → 004 after the cleanup snippet).
+>
+> **e2e workflow (owner-side)**: `npm run test:e2e` in `web/` starts its own server (build +
+> preview on `:4173`, `reuseExistingServer: false` — a leftover `vite preview` on 4173 will block
+> it; kill it first if the run dies with "http://localhost:4173 is already used"). The **owner runs
+> e2e themselves when flagged** — the assistant says "please run `npm run test:e2e`" and then
+> **listens for the owner's result** instead of running it. Nothing to run right now (28/28 green as
+> of Phase 3).
 
 
 
