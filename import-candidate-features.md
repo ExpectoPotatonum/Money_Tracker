@@ -907,10 +907,21 @@ No trigger/cron — spend-vs-budget is a client-side read over `transactions` (f
 
 ---
 
-> **BUILD STATUS — 2026-09-19, gate passed, awaiting owner e2e.**
+> **BUILD STATUS — 2026-09-19, e2e GREEN (32/32, owner-run).**
 >
 > **Lint ✅ · Vite build ✅** (Chart.js lands as its own code-split chunk `assets/auto-*.js`,
 > ~71.5 kB gzip — fetched only when `#/reports` opens; dashboard chunk unchanged in size).
+>
+> **e2e history:** first owner run → 21/32 failed. Root cause: the dashboard's `Promise.all` now
+> lists budgets (Phase 4), and `dashboard.spec`/`ai.spec` mocked every endpoint EXCEPT `budgets`;
+> their placeholder catch-all fulfilled `{}`, and `listBudgets()` ran `(data ?? []).map()` over it
+> → TypeError → the whole dashboard render died (every dashboard-content test timed out;
+> `reports.spec` passed because it never calls `listBudgets`). Fixed in `345e44a`: `Array.isArray`
+> guards in `listBudgets`/`getAllTransactions`/`getCategories`/`getCategoryTree` (non-array body
+> reads as no rows, matching `getCurrencies`), explicit `budgets` route mocks added to
+> `dashboard.spec`/`ai.spec`, and `budgets.spec` no longer waits on a non-existent `#dashboard`
+> id (waits on `#budgets-section`). One assertion nit afterwards (`9751e3c`): browsers serialize
+> inline styles with a trailing `;`, so bar-width asserts use regex. **Final: 32/32 passed.**
 >
 > Shipped in this phase (all committed/pushed):
 > - `supabase/migrations/202609190005_budgets.sql` — `budgets` table + partial unique indexes
@@ -946,10 +957,10 @@ No trigger/cron — spend-vs-budget is a client-side read over `transactions` (f
 > pushed/destroyed); budget form radios weren't a true group (shared `name`).
 >
 > **Owner TODOs (2):**
-> 1. Apply `202609190005_budgets.sql` to Supabase (SQL Editor, or `supabase db push`).
-> 2. In `web/`, run **`npm run test:e2e`** — the assistant listens. If it dies on
->    "http://localhost:4173 is already used", `netstat -ano | findstr 4173` →
->    `taskkill /PID <pid> /F` (config is `reuseExistingServer:false`).
+> 1. ~~Run `npm run test:e2e`~~ — **done, 32/32 green.**
+> 2. **Apply `202609190005_budgets.sql` to Supabase** (SQL Editor, or `supabase db push`) — still
+>    pending; the live dashboard's budget bars need the table. After that, configure accounts +
+>    package mapping in the web Accounts manager so Reports has data to chart.
 
 
 
