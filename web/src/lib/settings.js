@@ -6,6 +6,7 @@ const KEYS = {
   llmModel: 'mt_llm_model',
   llmEnabled: 'mt_llm_parse_enabled',
   lang: 'mt_lang',
+  theme: 'mt_theme',
 };
 
 export const DEFAULT_MODEL = 'gemini-2.5-flash';
@@ -16,6 +17,7 @@ export function getSettings() {
     llmModel: localStorage.getItem(KEYS.llmModel) || DEFAULT_MODEL,
     llmEnabled: localStorage.getItem(KEYS.llmEnabled) !== '0',
     lang: localStorage.getItem(KEYS.lang) || 'en',
+    theme: localStorage.getItem(KEYS.theme) || 'system',
   };
 }
 
@@ -26,5 +28,6 @@ export function saveSettings(patch) {
   if (patch.llmEnabled !== undefined)
     localStorage.setItem(KEYS.llmEnabled, next.llmEnabled ? '1' : '0');
   if (patch.lang !== undefined) localStorage.setItem(KEYS.lang, next.lang);
+  if (patch.theme !== undefined) localStorage.setItem(KEYS.theme, next.theme);
   return next;
 }

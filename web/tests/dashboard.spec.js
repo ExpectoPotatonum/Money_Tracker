@@ -171,13 +171,17 @@ function mockSupabase(page, { heartbeatAgeHours = 30, alerts = [] } = {}) {
 }
 
 async function openDashboard(page, options) {
+  // `theme` seeds the persisted preference (mt_theme) so a test can simulate
+  // a returning visitor; everything else in `options` feeds mockSupabase.
+  const { theme = null, ...mocks } = options ?? {};
   await page.addInitScript(
-    ({ key, session }) => {
+    ({ key, session, theme }) => {
       localStorage.setItem(key, JSON.stringify(session));
+      if (theme) localStorage.setItem('mt_theme', theme);
     },
-    { key: STORAGE_KEY, session: SESSION },
+    { key: STORAGE_KEY, session: SESSION, theme },
   );
-  mockSupabase(page, options);
+  mockSupabase(page, mocks);
   await page.goto('/');
 }
 
@@ -355,4 +359,47 @@ test('edit-mode tag picker saves the tag set via transaction_tags', async ({ pag
   expect(tagPosts[0]).toContain('"tag_id":"tag-1"');
   expect(tagPosts[0]).toContain('"tag_id":"tag-2"');
   expect(tagPosts[0]).toContain('"transaction_id":"t-1"');
+});
+
+// --- Phase 2: dark mode + PWA ---
+
+test('system dark preference renders the pure-black OLED theme', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openDashboard(page);
+
+  await expect(page.locator('html')).toHaveAttribute('data-bs-theme', 'dark');
+  // Owner decision: OLED #000, not Bootstrap's #212529.
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+});
+
+test('explicit light theme wins over a dark system preference', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await openDashboard(page, { theme: 'light' });
+
+  await expect(page.locator('html')).toHaveAttribute('data-bs-theme', 'light');
+});
+
+test('theme toggle cycles to dark and persists the preference', async ({ page }) => {
+  await openDashboard(page); // no stored preference -> system; test default scheme is light
+  await expect(page.locator('html')).toHaveAttribute('data-bs-theme', 'light');
+
+  await page.click('#nav-theme-btn');
+  await expect(page.locator('html')).toHaveAttribute('data-bs-theme', 'dark');
+  expect(await page.evaluate(() => localStorage.getItem('mt_theme'))).toBe('dark');
+
+  // A reload must restore the persisted preference, not flip back to system.
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-bs-theme', 'dark');
+});
+
+test('PWA manifest is linked and serves install metadata', async ({ page }) => {
+  await openDashboard(page);
+
+  await expect(page.locator('link[rel="manifest"]')).toHaveCount(1);
+  const resp = await page.request.get('/manifest.webmanifest');
+  expect(resp.ok()).toBe(true);
+  const manifest = await resp.json();
+  expect(manifest.name).toBe('Expense Tracker');
+  expect(manifest.display).toBe('standalone');
+  expect(manifest.icons.length).toBeGreaterThan(0);
 });

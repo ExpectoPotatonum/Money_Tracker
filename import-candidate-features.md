@@ -378,7 +378,22 @@ Legend (per item): ✅ **done** in tree · 🔨 **build** (cheap/additive) · �
    `api/tags.js` (group+tag CRUD, `setTransactionTags`), `tagManager.js` modal (create/rename/delete
    groups & colored tags), dashboards Tags column — colored chips read-only, grouped multi-select that
    saves immediately in edit mode — plus a CSV Tags column. Web-only, no Android/pipeline impact.
-2. **Phase 2 — Dark mode + PWA** — cheap, no data changes.
+2. **Phase 2 — Dark mode + PWA** — cheap, no data changes. ✅ **SHIPPED 2026-09-19**. Refs used:
+   ezBookkeeping (MIT) `src/core/theme.ts` (theme enum + persistence) and `src/sw.ts` (Workbox
+   precache + NetworkFirst pattern); BeeCount H1 dark mode = conceptual only (BSL).
+   - **Dark mode** — `mt_theme` in `lib/settings.js` (`system|dark|light`, default `system`),
+     `lib/theme.js` (`applyTheme` → `data-bs-theme` on `<html>` + `theme-color` meta; live
+     `prefers-color-scheme` tracking in system mode; `cycleTheme` wheel system→dark→light),
+     `style.css` pure-black OLED overrides (`--bs-body-bg:#000`, near-black secondary/table/nav),
+     nav toggle 🌙/☀️ + i18n en/zh. e2e: system-dark via `emulateMedia`, explicit light override,
+     toggle persistence.
+   - **PWA** — devDep `vite-plugin-pwa` 1.3.0 (Workbox); `vite.config.js` `registerType:
+     'autoUpdate'`, manifest (start_url `/`, standalone, #000, `icon.svg`), `navigateFallback:
+     '/index.html'`, NetworkFirst runtime cache `supabase-reads` for `/rest/v1/*` GETs (30 entries /
+     7 days, 3s timeout); `public/icon.svg`; `netlify.toml` no-cache for `sw.js`/`workbox-*.js`/
+     `manifest.webmanifest`; `playwright.config.js` `serviceWorkers:'block'` (built SW can't touch
+     the route mocks; dev stays SW-free). e2e: manifest link present + `/manifest.webmanifest` JSON.
+     23/23 e2e green.
 3. **Phase 3 — Accounts + transfer model** — owner decisions (Q6 + follow-up): pulled *before* balance
    trends. New `accounts` table (+GRANT +RLS, §17), `account_id` on transactions, transfer direction
    with cross-currency source/dest amounts, package→account default mapping + backfill, opening

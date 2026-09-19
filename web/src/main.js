@@ -1,4 +1,5 @@
 import 'bootstrap/dist/css/bootstrap.min.css';
+import './style.css';
 import { getSession, onAuthStateChange, signOut, updatePassword } from './api/auth.js';
 import { renderAuthGate } from './views/authGate.js';
 import { renderDashboard } from './views/dashboard.js';
@@ -6,10 +7,16 @@ import { renderReviewInbox } from './views/reviewInbox.js';
 import { installLogger, logApiError } from './lib/logger.js';
 import { openSettings } from './components/settingsDialog.js';
 import { t } from './lib/i18n.js';
+import { applyTheme, cycleTheme } from './lib/theme.js';
 
 const app = document.getElementById('app');
 
 installLogger();
+
+// Dark mode: apply the persisted preference (default: follow the system) and
+// keep tracking it live so an OS-level flip re-themes the app in-place.
+applyTheme();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
 function currentView() {
   return window.location.hash === '#/review' ? 'review' : 'dashboard';
@@ -44,13 +51,30 @@ function renderNav() {
   settingsBtn.textContent = t('nav.settings');
   settingsBtn.addEventListener('click', () => openSettings());
 
+  // Theme toggle: shows the RESOLVED icon (what's actually active, not the
+  // stored preference) and cycles system -> dark -> light on click.
+  const themeBtn = document.createElement('button');
+  themeBtn.type = 'button';
+  themeBtn.id = 'nav-theme-btn';
+  themeBtn.className = 'btn btn-outline-secondary btn-sm';
+  themeBtn.title = t('nav.theme.cycle');
+  themeBtn.setAttribute('aria-label', t('nav.theme'));
+  const syncThemeIcon = () => {
+    themeBtn.textContent = document.documentElement.dataset.bsTheme === 'dark' ? '🌙' : '☀️';
+  };
+  themeBtn.addEventListener('click', () => {
+    cycleTheme();
+    syncThemeIcon();
+  });
+  syncThemeIcon();
+
   const signOutBtn = document.createElement('button');
   signOutBtn.type = 'button';
   signOutBtn.className = 'btn btn-outline-secondary btn-sm';
   signOutBtn.textContent = t('nav.signOut');
   signOutBtn.addEventListener('click', () => signOut().catch(() => {}));
 
-  links.append(dashboardLink, reviewLink, settingsBtn, signOutBtn);
+  links.append(dashboardLink, reviewLink, themeBtn, settingsBtn, signOutBtn);
   nav.appendChild(links);
   return nav;
 }

@@ -8,3 +8,22 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# PWA update hygiene: the service worker and its Workbox chunks must never be
+# cached by Netlify's CDN — a stale cached sw.js would pin the old app forever
+# and defeat registerType:autoUpdate. The manifest is tiny and per-build, so
+# no-cache it too.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/workbox-*.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache"

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PWA icon: a coin glyph (the tracker) in the app's green, with an "M"
+       monogram for Money. Kept to primitives so no font is embedded. -->
+  <rect width="512" height="512" rx="96" fill="#198754"/>
+  <circle cx="256" cy="256" r="108" fill="#0d0d0d"/>
+  <circle cx="256" cy="256" r="108" fill="none" stroke="#ffffff" stroke-width="22"/>
+  <path d="M 190 330 L 256 165 L 322 330" fill="none" stroke="#ffffff"
+        stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 190 292 L 322 292" fill="none" stroke="#ffffff"
+        stroke-width="32" stroke-linecap="round"/>
+</svg>

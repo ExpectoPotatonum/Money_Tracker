@@ -10,6 +10,11 @@ export default defineConfig({
   timeout: 30_000,
   use: {
     baseURL: process.env.E2E_URL ?? 'http://localhost:4173',
+    // Phase 2 adds a production service worker (vite-plugin-pwa, build only).
+    // Block it in e2e so the built SW can never intercept the route-mocked
+    // requests and skew the tests — the mocks are the deterministic source of
+    // truth. Dev is unaffected (no SW is emitted for `vite dev`).
+    serviceWorkers: 'block',
   },
   webServer: {
     // Rebuild in "test" mode so the served bundle always carries the

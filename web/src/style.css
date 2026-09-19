@@ -1,0 +1,39 @@
+/* style.css — app-level overrides on top of Bootstrap 5.3.
+ *
+ * Dark mode uses Bootstrap's built-in data-bs-theme="dark", then re-pins the
+ * palette to pure black (#000) per the owner decision — OLED screens save
+ * power and the black looks intentional, not "dimmed gray". (ezBookkeeping
+ * theme.ts confirms the enum + CSS-driven approach; the OLED decision is ours.)
+ */
+
+:root[data-bs-theme='dark'] {
+  /* Pure-black OLED base instead of Bootstrap's #212529. */
+  --bs-body-bg: #000;
+  --bs-body-color: #e9ecef;
+  /* Panels (cards, dropdowns, modals) get a whisper of elevation, never gray. */
+  --bs-secondary-bg: #0d0d0d;
+  --bs-tertiary-bg: #111;
+  --bs-body-bg-rgb: 0, 0, 0;
+  --bs-emphasis-color-rgb: 233, 236, 239;
+  --bs-border-color: #2b2b2b;
+  --bs-card-bg: #0d0d0d;
+  --bs-modal-bg: #0d0d0d;
+  --bs-dropdown-bg: #0d0d0d;
+  --bs-dropdown-link-hover-bg: #1a1a1a;
+  /* Table stripes: subtle, not Bootstrap's blue-gray tint. */
+  --bs-table-bg: #000;
+  --bs-table-striped-bg: #0a0a0a;
+  --bs-table-striped-color: #e9ecef;
+  /* Form controls sit on black; borders stay legible. */
+  --bs-body-color-rgb: 233, 236, 239;
+}
+
+/* The navbar uses Bootstrap's light classes unconditionally; in dark mode
+ * re-theme it to near-black so it doesn't glare next to the OLED body. */
+:root[data-bs-theme='dark'] .navbar.bg-light {
+  --bs-navbar-color: rgba(233, 236, 239, 0.65);
+  --bs-navbar-hover-color: rgba(233, 236, 239, 0.9);
+  --bs-navbar-active-color: #fff;
+  background-color: #0d0d0d !important;
+  border: 1px solid var(--bs-border-color);
+}
