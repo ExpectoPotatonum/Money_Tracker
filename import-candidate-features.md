@@ -958,9 +958,49 @@ No trigger/cron — spend-vs-budget is a client-side read over `transactions` (f
 >
 > **Owner TODOs (2):**
 > 1. ~~Run `npm run test:e2e`~~ — **done, 32/32 green.**
-> 2. **Apply `202609190005_budgets.sql` to Supabase** (SQL Editor, or `supabase db push`) — still
->    pending; the live dashboard's budget bars need the table. After that, configure accounts +
->    package mapping in the web Accounts manager so Reports has data to chart.
+> 2. ~~Apply `202609190005_budgets.sql` to Supabase~~ — **done 2026-09-19.** Still open: configure
+>    accounts + package mapping in the web Accounts manager so Reports has data to chart.
+
+# Part 6 — UI refresh: BeeCount-inspired dark (2026-09-19)
+
+**Why this exists:** every shipped phase imported *features* (tags, themes, accounts, budgets, charts),
+never the *visual language* — the web app is stock Bootstrap 5.3 with only OLED dark-mode variable
+overrides in `style.css` (`index.html` = bare `container py-4`; views = stock `.card`/`.table`/`.btn`).
+Owner confirmed: the UI should look like the source repos, chose the **dark, BeeCount-inspired** direction.
+
+**Grounding (ideas only — BeeCount is BSL, no code copied):** BeeCount (`TNT-Likely/BeeCount`) is a
+Flutter tracker whose web/dark home is a **one-screen overview** — income/expense figures, asset
+composition, category share, trends — with a green **bee identity** (deep green `#0B3D2E`, which is
+already our own Android launcher color `ic_launcher_background`). We borrow the *look*, not the code.
+
+### 6.1 Scope
+1. **Design-token layer in `style.css`** (on the existing OLED base): bee-green accent family,
+   radius scale (cards 18px, inputs/buttons 10–12px), border/shadow system (borders in dark, soft
+   layered shadows in light), focus rings, typography scale. Restyle navbar (dark, pill active state),
+   cards, tables (rounded rows, hover), inputs/buttons/selects, badges, progress bars, dialogs —
+   **light mode gets the same tokens** so neither theme is stock.
+2. **Dashboard "one-screen overview"** (BeeCount home homage): summary tile strip — window income /
+   expense / MYR net (keeps `#total-myr`) — plus an **accounts overview row** (per-account balance +
+   currency chips). Every existing id/label stays, so e2e specs are untouched.
+3. **Reports:** `PALETTE` + cards aligned to the tokens (charts already dark-aware via
+   `data-bs-theme` MutationObserver).
+4. **i18n en/zh** for new tile/overview strings.
+5. **e2e:** existing 32 specs unchanged; owner runs at the end.
+
+### 6.2 Deliberately NOT in scope
+- No new features/components (reconcile UI, Insights Explorer, MCP stay deferred).
+- No Bootstrap semantic breakage; no code copied from BeeCount (BSL — visual language only).
+
+### 6.3 Decision points (owner picks; recommendations marked)
+1. **Accent colour** — (rec) emerald/bee-green (`#10b981` base, bright `#34d399` on OLED), echoes our
+   launcher green. Alt: violet/indigo.
+2. **Navigation** — (rec) keep top navbar, restyle as dark pill nav (lowest churn, e2e-safe) *vs*
+   left sidebar app-shell (closer to BeeCount's web, more restructuring + test risk).
+3. **Dashboard overview** — (rec) add summary tiles + accounts row (BeeCount's signature screen).
+
+### 6.4 Deliverables order
+1. Tokens + global restyle (both themes) → 2. dashboard overview restructure → 3. reports palette →
+4. i18n + lint/build → 5. owner runs `npm run test:e2e` (expect 32/32; assistant listens).
 
 
 
