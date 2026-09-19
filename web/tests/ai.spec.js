@@ -38,6 +38,14 @@ const LLM_JSON = JSON.stringify({
 // hit Frankfurter for FX. The AI specs add the Gemini endpoint and a POST-capable
 // transactions route (insert returns a single row, PATCH/DELETE -> 204).
 function mockSupabase(page, { rawNotifications = [] } = {}) {
+  // Registered FIRST so the specific routes below still win (Playwright: last
+  // registered route takes precedence). Any unmocked request to the fake
+  // project host gets a fast empty 200 instead of hitting the real network,
+  // which could otherwise hang a dashboard render under full-suite load.
+  page.route('**placeholder.supabase.co/**', (route) =>
+    route.fulfill({ json: {}, headers: { 'content-type': 'application/json' } }),
+  );
+
   page.route('**/rest/v1/transactions**', (route) => {
     const method = route.request().method();
     if (method === 'POST') {
@@ -54,6 +62,11 @@ function mockSupabase(page, { rawNotifications = [] } = {}) {
   });
   page.route('**/rest/v1/categories**', (route) =>
     route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
+  );
+  // The dashboard fetches tag groups on every render (Phase 1); no fixtures
+  // needed — an empty list means no tag pickers appear.
+  page.route('**/rest/v1/tag_groups**', (route) =>
+    route.fulfill({ json: [], headers: { 'content-type': 'application/json' } }),
   );
   page.route('**/rest/v1/currencies**', (route) =>
     route.fulfill({

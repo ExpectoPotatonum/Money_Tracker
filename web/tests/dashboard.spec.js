@@ -24,6 +24,21 @@ const CATEGORIES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Food & Dining' },
 ];
 
+const TAG_GROUPS = [
+  {
+    id: 'g-1',
+    name: 'Work',
+    sort_order: 1,
+    tags: [{ id: 'tag-1', name: 'Deductible', color: '#198754', group_id: 'g-1' }],
+  },
+  {
+    id: 'g-2',
+    name: 'Travel',
+    sort_order: 2,
+    tags: [{ id: 'tag-2', name: 'Flight', color: '#0d6efd', group_id: 'g-2' }],
+  },
+];
+
 const TRANSACTIONS = [
   {
     id: 't-1',
@@ -36,6 +51,10 @@ const TRANSACTIONS = [
     transaction_date: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     source_app_label: 'TnG eWallet',
     status: 'confirmed',
+    // M2M embed shape as returned by getTransactions' nested select.
+    transaction_tags: [
+      { tag_id: 'tag-1', tags: { id: 'tag-1', name: 'Deductible', color: '#198754' } },
+    ],
   },
   {
     id: 't-2',
@@ -61,9 +80,35 @@ const TRANSACTIONS = [
     source_app_label: 'TnG eWallet',
     status: 'confirmed',
   },
+  {
+    // Real-data shape that used to break the dashboard: BOTH merchant fields
+    // are null (nothing extracted). merchantCell() must fall through to the
+    // i18n 'Unknown' label — regression guard for "t is not a function".
+    id: 't-4',
+    amount: 2.5,
+    currency: 'MYR',
+    direction: 'debit',
+    merchant_display: null,
+    merchant_raw: null,
+    category_id: null,
+    transaction_date: new Date(Date.now() - 4 * 86_400_000).toISOString(),
+    source_app_label: 'HLB Connect',
+    status: 'confirmed',
+  },
 ];
 
 function mockSupabase(page, { heartbeatAgeHours = 30, alerts = [] } = {}) {
+  // Registered FIRST so the specific routes below still win (Playwright: last
+  // registered route takes precedence). Anything unmocked that still targets
+  // the fake project host gets a fast empty 200 instead of escaping to the
+  // real network — a real request there can hang (or reject) a dashboard
+  // render arbitrarily, which was the rare full-suite flake seen as a 30s
+  // "#edit-mode-toggle never appeared". Specific assertions still fail loudly
+  // if a real route is ever missed.
+  page.route('**placeholder.supabase.co/**', (route) =>
+    route.fulfill({ json: {}, headers: { 'content-type': 'application/json' } }),
+  );
+
   page.route('**/rest/v1/transactions**', (route) => {
     const method = route.request().method();
     if (method === 'PATCH' || method === 'DELETE') {
@@ -77,6 +122,17 @@ function mockSupabase(page, { heartbeatAgeHours = 30, alerts = [] } = {}) {
   page.route('**/rest/v1/categories**', (route) =>
     route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
   );
+  page.route('**/rest/v1/tag_groups**', (route) =>
+    route.fulfill({ json: TAG_GROUPS, headers: { 'content-type': 'application/json' } }),
+  );
+  // Tag links: POST insert / DELETE replace happen inside setTransactionTags.
+  page.route('**/rest/v1/transaction_tags**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST' || method === 'DELETE') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
+  });
   page.route('**/rest/v1/currencies**', (route) =>
     route.fulfill({
       json: [
@@ -132,11 +188,14 @@ test('signed-in dashboard renders transactions and the MYR total', async ({ page
   });
   await openDashboard(page);
 
-  // 12.00 + 8.50 MYR, plus 10.00 USD converted at 4.5 = 45.00 -> 65.50.
-  await expect(page.locator('#total-myr')).toHaveText('RM 65.50');
+  // 12.00 + 8.50 + 2.50 MYR, plus 10.00 USD converted at 4.5 = 45.00 -> 68.00.
+  await expect(page.locator('#total-myr')).toHaveText('RM 68.00');
   await expect(page.locator('table')).toContainText('Shopee');
   await expect(page.locator('table')).toContainText('Kopitiam');
   await expect(page.locator('table')).toContainText('Netflix');
+  // The no-merchant row (both merchant fields null) renders the i18n fallback
+  // label instead of throwing.
+  await expect(page.locator('table')).toContainText('Unknown');
 
   // FX is frozen at the transaction's own date (ADR 0003), never "latest".
   expect(fxRequests.length).toBeGreaterThan(0);
@@ -162,16 +221,16 @@ test('edit-mode toggle reveals editable controls and a per-row Delete', async ({
   await expect(page.locator('input[type="datetime-local"]')).toHaveCount(0);
 
   await page.click('#edit-mode-toggle');
-  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(3);
+  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(4);
   // No per-row Save buttons — edits persist when edit mode is toggled off.
   await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Delete' })).toHaveCount(4);
 });
 
 test('toggling edit mode preserves read-only rendering when off', async ({ page }) => {
   await openDashboard(page);
   await page.click('#edit-mode-toggle');
-  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(3);
+  await expect(page.locator('input[type="datetime-local"]')).toHaveCount(4);
   await page.click('#edit-mode-toggle');
   await expect(page.locator('input[type="datetime-local"]')).toHaveCount(0);
 });
@@ -253,4 +312,47 @@ test('clicking Delete issues a DELETE for that row', async ({ page }) => {
   await page.click('#edit-mode-toggle');
   await page.locator('tbody tr').first().getByRole('button', { name: 'Delete' }).click();
   await expect.poll(() => deleted).toBe(true);
+});
+
+test('read-only rows show tag chips with their colors', async ({ page }) => {
+  await openDashboard(page);
+
+  const row = page.locator('tbody tr', { hasText: 'Shopee' });
+  const chip = row.locator('.badge', { hasText: 'Deductible' });
+  await expect(chip).toBeVisible();
+  // Colored badge name comes from the tag's color, not a class.
+  await expect(chip).toHaveCSS('background-color', 'rgb(25, 135, 84)');
+
+  // Rows without tags render the em-dash (no badge at all).
+  const tied = page.locator('tbody tr', { hasText: 'Netflix' });
+  await expect(tied.locator('.badge')).toHaveCount(0);
+});
+
+test('edit-mode tag picker saves the tag set via transaction_tags', async ({ page }) => {
+  const tagPosts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/transaction_tags')) {
+      tagPosts.push(req.postData());
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#edit-mode-toggle');
+  // The first rendered row is t-1 (Shopee): the merchant cell is an <input> in
+  // edit mode, so `hasText: 'Shopee'` matches nothing there — target rows by
+  // position instead (filtering by input values isn't supported).
+  const picker = page
+    .locator('tbody tr')
+    .first()
+    .locator('select[aria-label="Tags (select multiple; Ctrl/Cmd-click to toggle)"]');
+  await expect(picker).toHaveCount(1);
+  await expect(picker.locator('optgroup[label="Work"]')).toContainText('Deductible');
+  await expect(picker.locator('optgroup[label="Travel"]')).toContainText('Flight');
+
+  // Replace the set with both tags — saving is immediate (no batch PATCH).
+  await picker.selectOption(['tag-1', 'tag-2']);
+  await expect.poll(() => tagPosts.length).toBe(1);
+  expect(tagPosts[0]).toContain('"tag_id":"tag-1"');
+  expect(tagPosts[0]).toContain('"tag_id":"tag-2"');
+  expect(tagPosts[0]).toContain('"transaction_id":"t-1"');
 });

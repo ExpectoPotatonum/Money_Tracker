@@ -267,6 +267,7 @@ Legend (per item): ✅ **done** in tree · 🔨 **build** (cheap/additive) · �
 | Multi-provider AI factory (BeeCount B1) | 🚫 won't do | keep the thin `utils/llm.js` Gemini wrapper |
 | CSV export (BeeCount F / ez L) | ✅ done | dashboard header button |
 | Recurring **flag** (manual), FX cache/polish | ✅ done | `is_recurring`, `utils/fx.js` |
+| Tags — groups + color labels + M2M (Phase 1) | ✅ shipped 2026-09-19 | migration `202609190001_tag_groups_tags.sql`, `api/tags.js`, `tagManager.js`, Tags column + edit-mode picker + CSV column |
 
 ## 4.2 New candidates — migration / refactor check + feasibility
 
@@ -372,7 +373,11 @@ Legend (per item): ✅ **done** in tree · 🔨 **build** (cheap/additive) · �
 > and image attachments (Q1). Captured from here: **voice + AI-text** only (web text half done; only
 > Android voice is new).
 
-1. **Phase 1 — Tags** — one migration (tables + GRANT + RLS) + edit-mode UI.
+1. **Phase 1 — Tags** — one migration (tables + GRANT + RLS) + edit-mode UI. ✅ **SHIPPED 2026-09-19**:
+   `202609190001_tag_groups_tags.sql` (tag_groups / tags / transaction_tags, owner_only RLS),
+   `api/tags.js` (group+tag CRUD, `setTransactionTags`), `tagManager.js` modal (create/rename/delete
+   groups & colored tags), dashboards Tags column — colored chips read-only, grouped multi-select that
+   saves immediately in edit mode — plus a CSV Tags column. Web-only, no Android/pipeline impact.
 2. **Phase 2 — Dark mode + PWA** — cheap, no data changes.
 3. **Phase 3 — Accounts + transfer model** — owner decisions (Q6 + follow-up): pulled *before* balance
    trends. New `accounts` table (+GRANT +RLS, §17), `account_id` on transactions, transfer direction

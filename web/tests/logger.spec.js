@@ -35,8 +35,17 @@ function mock403(page) {
 
 async function readLogText(page) {
   return page.evaluate(async () => {
+    // Open at the same version (2) the app uses and create the store on
+    // upgrade, mirroring lib/logger.js openDb(). A bare indexedDB.open(name)
+    // creates a fresh v1 database with no stores, so racing the app's first
+    // write ("store not found") was the pre-existing flake here.
     const db = await new Promise((resolve, reject) => {
-      const req = indexedDB.open('tracker-log');
+      const req = indexedDB.open('tracker-log', 2);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains('errors')) {
+          req.result.createObjectStore('errors');
+        }
+      };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });

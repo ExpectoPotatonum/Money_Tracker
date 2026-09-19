@@ -12,6 +12,8 @@ import { formatMoney, setCurrencySymbols } from '../utils/format.js';
 import { alertBanner } from '../components/common.js';
 import { transactionTable } from '../components/transactionTable.js';
 import { openNlModal } from '../components/nlModal.js';
+import { openTagManager } from '../components/tagManager.js';
+import { getTagGroups, setTransactionTags } from '../api/tags.js';
 import { t } from '../lib/i18n.js';
 
 const OFFLINE_AFTER_HOURS = 6;
@@ -37,14 +39,22 @@ export async function renderDashboard(root) {
     });
   }
 
-  const [transactions, categoryNames, heartbeat, alerts, currencies] = await Promise.all([
+  const [transactions, categoryNames, heartbeat, alerts, currencies, tagGroups] = await Promise.all([
     getTransactions({ withinDays: 30, limit: 100 }),
     getCategories(),
     getLatestHeartbeat(),
     getOpenAlerts(),
     getCurrencies(),
+    getTagGroups(),
   ]);
   setCurrencySymbols(currencies);
+
+  // Flatten groups -> one ordered list for the edit-mode picker. Groups arrive
+  // in sort_order then name; tags within each group in name order, so iterating
+  // in place yields consecutive runs the table can chunk into optgroups.
+  const allTags = tagGroups.flatMap((g) =>
+    (g.tags ?? []).map((tag) => ({ ...tag, group: g.name })),
+  );
 
   // agents.md §10 — turn the headless failure into something noticeable.
   if (heartbeat) {
@@ -132,7 +142,7 @@ export async function renderDashboard(root) {
     editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
     refresh();
   });
-  left.append(h, addBtn, editBtn, csvExportBtn(debits, credits, myrTotals, categoryNames));
+  left.append(h, addBtn, editBtn, tagsManageBtn(), csvExportBtn(debits, credits, myrTotals, categoryNames));
   const total = document.createElement('div');
   total.className = 'text-end';
   const totalLabel = document.createElement('div');
@@ -157,6 +167,7 @@ export async function renderDashboard(root) {
 
   const tableProps = {
     categoryNames,
+    allTags,
     myrTotals,
     editMode,
     onDirty: (id, patch) => {
@@ -175,6 +186,13 @@ export async function renderDashboard(root) {
     // PATCHes that row immediately, like the recurring toggle.
     onCategorize: async (id, categoryId) => {
       await updateTransaction(id, { category_id: categoryId });
+      refresh();
+    },
+    // Tag toggles replace the row's tag set in the M2M table immediately —
+    // tags are a separate table, so they can't ride the batched transactions
+    // PATCH that flushes on edit-mode toggle-off.
+    onSetTags: async (id, tagIds) => {
+      await setTransactionTags(id, tagIds);
       refresh();
     },
   };
@@ -231,6 +249,25 @@ function csvExportBtn(debits, credits, myrTotals, categoryNames) {
   return btn;
 }
 
+// "Manage tags" opens the tag manager modal; on close, pending edits flush
+// first (if edit mode is on) so a re-render never drops them.
+function tagsManageBtn() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'tags-manage-btn';
+  btn.className = 'btn btn-sm btn-outline-secondary';
+  btn.textContent = t('tags.manage');
+  btn.addEventListener('click', () =>
+    openTagManager({
+      onChanged: async () => {
+        if (editMode) await flushDirty();
+        refresh();
+      },
+    }),
+  );
+  return btn;
+}
+
 function downloadCsv(debits, credits, myrTotals, categoryNames) {
   const rows = [...debits, ...credits];
   const header = [
@@ -243,6 +280,7 @@ function downloadCsv(debits, credits, myrTotals, categoryNames) {
     'Direction',
     'Sent from',
     'Recurring',
+    'Tags',
     'Notes',
   ];
   const body = rows.map((t) => {
@@ -257,6 +295,7 @@ function downloadCsv(debits, credits, myrTotals, categoryNames) {
       t.direction,
       t.source_app_label ?? '',
       t.is_recurring ? 'yes' : '',
+      (t.tags ?? []).map((tag) => tag.name).join('; '),
       t.notes ?? '',
     ];
   });

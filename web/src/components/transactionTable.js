@@ -27,19 +27,24 @@ function formatMerchantName(name) {
  * by the view when edit mode is toggled off (no per-row Save buttons). Delete
  * is the only per-row action. In read-only mode, rows with no category show an
  * inline picker instead of the em-dash; choosing one fires
- * `onCategorize(id, categoryId)` for an immediate save. Cell values are
- * rendered via textContent (untrusted-notification-input convention) — only
- * the form controls the user interacts with use inputs.
+ * `onCategorize(id, categoryId)` for an immediate save. Tags are a M2M link
+ * (separate table), so they're the mirror of that: read-only rows show colored
+ * chips, edit-mode rows show a multi-select that saves immediately via
+ * `onSetTags(id, tagIds)`. Cell values are rendered via textContent
+ * (untrusted-notification-input convention) — only the form controls the user
+ * interacts with use inputs.
  */
 export function transactionTable({
   transactions,
   categoryNames,
   myrTotals = new Map(),
   editMode = false,
+  allTags = [],
   onDirty = null,
   onDelete = null,
   onToggleRecurring = null,
   onCategorize = null,
+  onSetTags = null,
 }) {
   const table = document.createElement('table');
   table.className = 'table table-sm table-striped align-middle';
@@ -52,6 +57,7 @@ export function transactionTable({
     <th class="text-end">${tr('col.amount')}</th>
     <th class="text-end">${tr('col.myr')}</th>
     <th>${tr('col.sentFrom')}</th>
+    <th>${tr('col.tags')}</th>
     <th>${tr('col.notes')}</th>
     <th></th>
   </tr>`;
@@ -85,6 +91,7 @@ export function transactionTable({
       tr.appendChild(amountCell(t));
       tr.appendChild(myrCell(t, myrTotals));
       tr.appendChild(sourceCell(t));
+      tr.appendChild(tagsCell(t));
       tr.appendChild(notesCell(t));
       tr.appendChild(actionCell());
     } else {
@@ -102,6 +109,7 @@ export function transactionTable({
       tr.appendChild(amountEditCell(draft, report));
       tr.appendChild(myrCell(t, myrTotals)); // MYR recomputed on refresh, not editable
       tr.appendChild(sourceEditCell(draft, report));
+      tr.appendChild(tagsEditCell(t, allTags));
       tr.appendChild(notesEditCell(draft, report));
       tr.appendChild(
         actionCell({
@@ -135,7 +143,7 @@ export function transactionTable({
     // fall back to the normalized display name. Edit mode still edits raw.
     const display = (t.merchant_raw && t.merchant_raw.includes('/'))
       ? formatMerchantName(t.merchant_raw)
-      : (t.merchant_display ?? t.merchant_raw ?? t('col.unknown'));
+      : (t.merchant_display ?? t.merchant_raw ?? tr('col.unknown'));
     td.textContent = display;
     if (t.merchant_raw && t.merchant_display && t.merchant_raw !== t.merchant_display) {
       td.title = `matched from: ${t.merchant_raw}`;
@@ -208,6 +216,73 @@ export function transactionTable({
         },
       }),
     );
+    return td;
+  }
+
+  function tagsCell(t) {
+    const td = document.createElement('td');
+    const tags = t.tags ?? [];
+    if (tags.length === 0) {
+      td.textContent = '—';
+      return td;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'd-flex flex-wrap gap-1';
+    for (const tag of tags) {
+      const chip = document.createElement('span');
+      chip.className = 'badge';
+      if (tag.color) {
+        chip.style.backgroundColor = tag.color;
+        chip.style.color = '#fff';
+      } else {
+        chip.classList.add('text-bg-secondary');
+      }
+      chip.textContent = tag.name;
+      wrap.appendChild(chip);
+    }
+    td.appendChild(wrap);
+    return td;
+  }
+
+  // Edit-mode tag picker. A multi-select grouped by tag group (optgroup);
+  // selecting/deselecting replaces the transaction's tag set immediately
+  // through onSetTags (tags live in a separate M2M table, so they can't ride
+  // the batched transactions PATCH like the other cells).
+  function tagsEditCell(t, allTags) {
+    const td = document.createElement('td');
+    if (allTags.length === 0) {
+      const hint = document.createElement('span');
+      hint.className = 'text-muted small';
+      hint.textContent = tr('tags.noneYet');
+      td.appendChild(hint);
+      return td;
+    }
+    const select = document.createElement('select');
+    select.multiple = true;
+    select.size = Math.min(4, Math.max(1, allTags.length));
+    select.className = 'form-select form-select-sm';
+    select.setAttribute('aria-label', tr('col.tagPicker'));
+    const current = new Set((t.tags ?? []).map((x) => x.id));
+    let lastGroup = null;
+    for (const tag of allTags) {
+      const group = tag.group ?? tr('tags.ungrouped');
+      if (group !== lastGroup) {
+        const og = document.createElement('optgroup');
+        og.label = group;
+        select.appendChild(og);
+        lastGroup = group;
+      }
+      const opt = document.createElement('option');
+      opt.value = tag.id;
+      opt.textContent = tag.name;
+      opt.selected = current.has(tag.id);
+      select.lastElementChild.appendChild(opt);
+    }
+    select.addEventListener('change', () => {
+      const selected = [...select.selectedOptions].map((o) => o.value);
+      if (onSetTags) onSetTags(t.id, selected);
+    });
+    td.appendChild(select);
     return td;
   }
 

@@ -4,7 +4,7 @@ export async function getTransactions({ withinDays = 30, limit = 100, status = n
   let query = supabase
     .from('transactions')
     .select(
-      'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_app_label, status, notes, is_recurring',
+      'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_app_label, status, notes, is_recurring, transaction_tags ( tag_id, tags ( id, name, color ) )',
     )
     .order('transaction_date', { ascending: false })
     .limit(limit);
@@ -17,7 +17,18 @@ export async function getTransactions({ withinDays = 30, limit = 100, status = n
 
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return (data ?? []).map(normalizeTx);
+}
+
+// Flatten the M2M embed (transaction_tags -> tags) into a plain `tags` array on
+// each row: [{ id, name, color }]. Keeps component code free of the join shape.
+function normalizeTx(t) {
+  const { transaction_tags: links, ...rest } = t;
+  const tags = (links ?? [])
+    .map((l) => l.tags)
+    .filter(Boolean)
+    .map((tag) => ({ id: tag.id, name: tag.name, color: tag.color }));
+  return { ...rest, tags };
 }
 
 export async function getCategories() {
