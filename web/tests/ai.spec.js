@@ -85,6 +85,14 @@ function mockSupabase(page, { rawNotifications = [] } = {}) {
     }
     return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
   });
+  // The dashboard lists budgets on every render (Phase 4); empty here.
+  page.route('**/rest/v1/budgets**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST' || method === 'PATCH' || method === 'DELETE') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
+  });
   // The dashboard fetches tag groups on every render (Phase 1); no fixtures
   // needed — an empty list means no tag pickers appear.
   page.route('**/rest/v1/tag_groups**', (route) =>

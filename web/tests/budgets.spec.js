@@ -164,7 +164,8 @@ async function openDashboard(page, options) {
   );
   await mockSupabase(page, options ?? {});
   await page.goto('/');
-  await expect(page.locator('#dashboard')).toBeVisible();
+  // No `#dashboard` id exists in the app — the budgets section (rendered only
+  // after the full dashboard render completes) is the deterministic signal.
   await expect(page.locator('#budgets-section')).toBeVisible();
 }
 

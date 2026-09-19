@@ -38,7 +38,7 @@ export async function getAllTransactions() {
       .order('transaction_date', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
-    const page = (data ?? []).map(normalizeTx);
+    const page = Array.isArray(data) ? data.map(normalizeTx) : [];
     out.push(...page);
     if (page.length < PAGE) break;
     if (from > 50_000) break; // sanity guard: never loop forever on bad data
@@ -60,7 +60,8 @@ function normalizeTx(t) {
 export async function getCategories() {
   const { data, error } = await supabase.from('categories').select('id, name');
   if (error) throw new Error(error.message);
-  return new Map((data ?? []).map((c) => [c.id, c.name]));
+  const rows = Array.isArray(data) ? data : [];
+  return new Map(rows.map((c) => [c.id, c.name]));
 }
 
 // Full category rows (two-tier: parent_id) for reports roll-ups and budget
@@ -71,7 +72,7 @@ export async function getCategoryTree() {
     .select('id, name, parent_id, icon, color')
     .order('name', { ascending: true });
   if (error) throw new Error(error.message);
-  return data ?? [];
+  return Array.isArray(data) ? data : [];
 }
 
 // Manual edit/delete (agents.md: parsing gets things wrong, e.g. an e-wallet

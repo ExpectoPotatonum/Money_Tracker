@@ -13,7 +13,10 @@ export async function listBudgets() {
     )
     .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []).map((b) => ({
+  // Defensive: a non-array body (missing table, RLS quirk, or a test mock
+  // returning {}) reads as "no budgets" instead of crashing the render.
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map((b) => ({
     id: b.id,
     category_id: b.category_id,
     period: b.period,

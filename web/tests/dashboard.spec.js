@@ -235,6 +235,14 @@ function mockSupabase(
   page.route('**/rest/v1/categories**', (route) =>
     route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
   );
+  // Phase 4: the dashboard now lists budgets too (empty here — no section).
+  page.route('**/rest/v1/budgets**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST' || method === 'PATCH' || method === 'DELETE') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
+  });
   page.route('**/rest/v1/tag_groups**', (route) =>
     route.fulfill({ json: TAG_GROUPS, headers: { 'content-type': 'application/json' } }),
   );
