@@ -398,7 +398,7 @@ Legend (per item): ✅ **done** in tree · 🔨 **build** (cheap/additive) · �
    trends. **BUILT + GATED 2026-09-19 (awaiting owner commit/push)** — plan in §4.8; design pulled
    live from ezBookkeeping.
 4. **Phase 4 — Balance trends + budgets + charts** — reads accounts; net-worth + per-account lines,
-   budgets table, Chart.js views.
+   budgets table, Chart.js views. **BUILD PLAN in §4.9 (2026-09-19, awaiting go).**
 5. **Phase 5 — Android voice (SpeechRecognizer)** — completes the deferred half of voice; on-device
    Gemini key (owner decision), quick-add voice UI.
 6. **Phase 6 — Recurring auto-entry (Android WorkManager)** — owner decision (Q4): phone-driven
@@ -787,6 +787,119 @@ in the trigger (see above). Re-running is safe: maps are stable, new captures ju
 > e2e themselves when flagged** — the assistant says "please run `npm run test:e2e`" and then
 > **listens for the owner's result** instead of running it. Nothing to run right now (28/28 green as
 > of Phase 3).
+
+---
+
+# Part 5 — Phase 4 (Balance trends + budgets + charts) — BUILD PLAN (2026-09-19, awaiting go)
+
+Owner decisions carried in from §4.3/§4.7.5: balance lines computed client-side (opening_balance +
+Σ credits − Σ debits), budgets = monthly + per-category + total with **inline progress bars only**
+(no `dashboard_alerts` banner, no cron), charts = monthly income/expense + category share + the two
+balance lines. Grounded in code review (2026-09-19): `dashboard.js` (30-day/100-row fetch, totals,
+CSV), `utils/fx.js` (ADR 0001 — single FX touchpoint; ADR 0003 — rate frozen at txn date),
+`api/transactions.js` (`getTransactions` window/limit), `main.js` hash routing, `accounts` schema
+(202609190002), `categories` (two-tier via `parent_id`, initial schema).
+
+## 4.9.1 What we're building
+
+1. **Reports view** — new hash route `#/reports` (nav link, same pattern as Review):
+   - **Monthly income/expense** — last-12-months bar chart, MYR, transfers excluded.
+   - **Category share** — pie of the selected month's debits by category (MYR).
+   - **Balance curves** — per-account line per §4.7.1 (`opening_balance + Σ(credits) − Σ(debits)` up
+     to each date) + one **net-worth** line (visible accounts; every amount → MYR at its own date,
+     ADR 0003; transfers net to zero at the account level).
+   - Keeps the dashboard's 30-day fetch lean — the full-history fetch lives here.
+2. **Budgets** — a `budgets` table + inline progress bars ON THE DASHBOARD (§4.7.5): per-category
+   plus one overall (category_id NULL), monthly period only in v1, **computed at display time** —
+   current-calendar-month spend (debits, non-transfer, MYR) vs amount. No cron, no paid tier.
+3. **Chart.js (MIT)** — the one new dependency (~+70KB gzip). ECharts rejected as overweight for
+   3–4 charts. Insights Explorer stays deferred (§4.3 Item F).
+
+## 4.9.2 Schema — `supabase/migrations/202609190005_budgets.sql`
+
+GRANT + RLS per AGENTS.md §17 (owner_only, same as accounts).
+
+```sql
+create table budgets (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id),
+  category_id uuid references categories(id),      -- NULL = overall budget
+  period      text not null default 'monthly' check (period in ('monthly')),
+  amount      numeric(12,2) not null check (amount >= 0),
+  currency    text not null default 'MYR',         -- MYR-only in v1 (decision 2)
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+grant select, insert, update, delete on budgets to authenticated;
+alter table budgets enable row level security;
+create policy "owner_only" on budgets
+  for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- NULL category_id defeats a plain unique() (NULLs are distinct), so enforce
+-- one-overall + one-per-category-per-period with partial unique indexes.
+create unique index budgets_overall_uq on budgets (user_id, period) where category_id is null;
+create unique index budgets_per_category_uq on budgets (user_id, category_id, period)
+  where category_id is not null;
+```
+
+No trigger/cron — spend-vs-budget is a client-side read over `transactions` (free tier).
+
+## 4.9.3 Web build
+
+- **`api/budgets.js`** — `listBudgets()` (embeds category name/icon), `saveBudget`, `deleteBudget`.
+- **`api/transactions.js`** — extend `getTransactions` for full history (e.g. `withinDays: 0` +
+  raised limit/pagination) for the curve math; dashboard default (30 days/100) unchanged.
+- **`utils/fx.js`** — add `timeSeries(base, quote, startDate, endDate)`: ONE Frankfurter request per
+  currency for the whole curve instead of N per-date lookups. Stays the only FX touchpoint (ADR 0001).
+- **`views/reports.js`** — canvases + period selector (This month / Last 12 months / custom),
+  account show/hide toggles, dark-mode-aware Chart palette (reads `data-bs-theme`). Chart.js imported
+  here only (code-split chunk).
+- **`main.js`** — `currentView()`/render gain `#/reports`; nav link "Reports" (en/zh).
+- **`components/budgetManager.js`** — modal: overall or per-category, amount; save/delete. Entry:
+  "Budgets" button beside Tags/Accounts.
+- **Dashboard** — budgets section (progress bars) between header and tables (§4.7.5); one small
+  extra fetch of current-month debits (cheap window, filtered to month start).
+- **i18n** en/zh for every string; **e2e specs added — owner runs when flagged** (§4.8 workflow).
+
+## 4.9.4 Decision points before build (recommendations inline)
+
+1. **Reports as its own view** (recommend) vs inline dashboard section — keeps the dashboard fetch
+   lean; full-history + Chart.js load only when Reports opens.
+2. **Budgets MYR-only in v1** (recommend) — spend converted at each txn's own date (ADR 0003);
+   per-currency budgets later if ever wanted.
+3. **Parent budgets count child-category spend** (recommend) — categories are two-tier
+   (`parent_id`); a "Food" budget should cover its children. Leaf-exact match is simpler but
+   surprising.
+4. **Net-worth excludes hidden accounts** (recommend) — `is_hidden` = "not counted" for the
+   headline; per-account lines can still show them.
+5. **Anchor balances at `opening_balance_date`** (recommend) — ignore rows dated before the
+   anchor (the opening balance already reflects pre-anchor history); prevents double-counting.
+   Also align `accountManager.js` "Balance now (est.)", which currently sums without the filter.
+6. **Budgets UI = inline section** (recommend) — matches §4.7.5 exactly.
+7. **Chart.js bundle cost accepted** (recommend) — fine on Netlify static with code-split chunk.
+8. **Reconcile UI ("type your real balance" modal, §4.7.5) DEFER** (recommend) — the adjustment-
+   transaction mechanism already works in the data model; the modal is polish that can land after
+   the charts prove useful.
+
+## 4.9.5 Ripples checklist
+
+1. `main.js` routing/nav + i18n (new view).
+2. `api/transactions.js` full-history fetch — verify pagination; tests.
+3. `utils/fx.js` `timeSeries` — cache shape/version (extend the `STORAGE_KEY` regex for series
+   keys; keep ADR 0001/0003 semantics).
+4. `dashboard.js` budgets section — extra fetch rides the existing PWA NetworkFirst cache
+   (`supabase-reads` covers `/rest/v1/*` GETs).
+5. `accountManager.js` balance-est. anchor alignment (decision 5).
+6. `reports.js` — Chart.js destroy-on-re-render (route changes), dark palette from `theme.js`.
+7. e2e — new Reports/Budgets specs with route mocks; **owner runs `npm run test:e2e` when flagged**.
+
+## 4.9.6 Deliverables order
+
+1. Migration `202609190005_budgets.sql` + `api/budgets.js` (owner applies migration at go).
+2. `fx.js` `timeSeries` + transaction full-history fetch (unit-testable pieces first).
+3. Reports view + nav + Chart.js (3 charts + curves).
+4. Budgets manager + dashboard progress bars.
+5. i18n + e2e specs → flag owner: "please run `npm run test:e2e`".
 
 
 
