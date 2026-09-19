@@ -7,12 +7,15 @@ import {
 import { getCurrencies } from '../api/currencies.js';
 import { getLatestHeartbeat } from '../api/heartbeat.js';
 import { getOpenAlerts, dismissAlert } from '../api/alerts.js';
+import { listAccounts, assignAccount, deleteTransfer } from '../api/accounts.js';
 import { convert } from '../utils/fx.js';
 import { formatMoney, setCurrencySymbols } from '../utils/format.js';
 import { alertBanner } from '../components/common.js';
 import { transactionTable } from '../components/transactionTable.js';
 import { openNlModal } from '../components/nlModal.js';
 import { openTagManager } from '../components/tagManager.js';
+import { openAccountManager } from '../components/accountManager.js';
+import { openTransferDialog } from '../components/transferDialog.js';
 import { getTagGroups, setTransactionTags } from '../api/tags.js';
 import { t } from '../lib/i18n.js';
 
@@ -39,15 +42,37 @@ export async function renderDashboard(root) {
     });
   }
 
-  const [transactions, categoryNames, heartbeat, alerts, currencies, tagGroups] = await Promise.all([
+  const [
+    transactions,
+    categoryNames,
+    heartbeat,
+    alerts,
+    currencies,
+    tagGroups,
+    accounts,
+  ] = await Promise.all([
     getTransactions({ withinDays: 30, limit: 100 }),
     getCategories(),
     getLatestHeartbeat(),
     getOpenAlerts(),
     getCurrencies(),
     getTagGroups(),
+    listAccounts(),
   ]);
   setCurrencySymbols(currencies);
+
+  // Phase 3: account display names + a per-transfer pair map (which half is
+  // the source = debit side, which is the destination = credit side). The pair
+  // is what turns both halves into an "A → B" display in the table.
+  const accountNames = new Map(accounts.map((a) => [a.id, a.name]));
+  const transferPairs = new Map();
+  for (const tx of transactions) {
+    if (!tx.transfer_group_id) continue;
+    const p = transferPairs.get(tx.transfer_group_id) ?? { source: null, dest: null };
+    if (tx.direction === 'debit') p.source = tx.account_id;
+    else p.dest = tx.account_id;
+    transferPairs.set(tx.transfer_group_id, p);
+  }
 
   // Flatten groups -> one ordered list for the edit-mode picker. Groups arrive
   // in sort_order then name; tags within each group in name order, so iterating
@@ -85,9 +110,19 @@ export async function renderDashboard(root) {
   // transaction's own date (ADR 0003) so past rows don't drift as live rates
   // move; rows whose historical rate is unavailable fall back to showing the
   // original amount, never to hiding.
-  const debits = transactions.filter((t) => t.direction === 'debit');
-  const credits = transactions.filter((t) => t.direction === 'credit');
-  const all = [...debits, ...credits];
+  //
+  // Transfers (two-row linked pairs) are excluded from the spending/income
+  // tables AND the totals — moving money between own accounts isn't spending.
+  // The halves still go through the MYR conversion below so the CSV export has
+  // a MYR figure for every row, transfers included.
+  const debits = transactions.filter(
+    (t) => t.direction === 'debit' && !t.transfer_group_id,
+  );
+  const credits = transactions.filter(
+    (t) => t.direction === 'credit' && !t.transfer_group_id,
+  );
+  const transfers = transactions.filter((t) => t.transfer_group_id);
+  const all = [...debits, ...credits, ...transfers];
   const myrTotals = new Map();
   let totalMyr = 0;
   let skipped = 0;
@@ -103,12 +138,13 @@ export async function renderDashboard(root) {
     const t = all[i];
     const r = results[i];
     const myr = r.status === 'fulfilled' ? r.value : null;
+    const isSpend = t.direction === 'debit' && !t.transfer_group_id;
     if (myr === null) {
-      if (t.direction === 'debit') skipped += 1;
+      if (isSpend) skipped += 1;
       myrTotals.set(t.id, null);
     } else {
       myrTotals.set(t.id, myr);
-      if (t.direction === 'debit') totalMyr += myr;
+      if (isSpend) totalMyr += myr;
     }
   }
 
@@ -124,7 +160,9 @@ export async function renderDashboard(root) {
   addBtn.id = 'nl-add-btn';
   addBtn.className = 'btn btn-sm btn-outline-secondary';
   addBtn.textContent = t('nl.title');
-  addBtn.addEventListener('click', () => openNlModal({ categoryNames, onSaved: refresh }));
+  addBtn.addEventListener('click', () =>
+    openNlModal({ categoryNames, accounts, onSaved: refresh }),
+  );
   const editBtn = document.createElement('button');
   editBtn.type = 'button';
   editBtn.id = 'edit-mode-toggle';
@@ -142,7 +180,15 @@ export async function renderDashboard(root) {
     editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
     refresh();
   });
-  left.append(h, addBtn, editBtn, tagsManageBtn(), csvExportBtn(debits, credits, myrTotals, categoryNames));
+  left.append(
+    h,
+    addBtn,
+    transferBtn(accounts),
+    editBtn,
+    tagsManageBtn(),
+    accountsManageBtn(accounts, transactions),
+    csvExportBtn(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs),
+  );
   const total = document.createElement('div');
   total.className = 'text-end';
   const totalLabel = document.createElement('div');
@@ -168,6 +214,9 @@ export async function renderDashboard(root) {
   const tableProps = {
     categoryNames,
     allTags,
+    accounts,
+    accountNames,
+    transferPairs,
     myrTotals,
     editMode,
     onDirty: (id, patch) => {
@@ -178,6 +227,14 @@ export async function renderDashboard(root) {
       await deleteTransaction(id);
       refresh();
     },
+    // Transfers delete BOTH halves in one request (app-enforced pairing) —
+    // a per-half delete would orphan the other half. Confirmed separately
+    // because it removes two rows, not one.
+    onDeleteTransfer: async (groupId) => {
+      if (!window.confirm(t('transfer.deleteConfirm'))) return;
+      await deleteTransfer(groupId);
+      refresh();
+    },
     onToggleRecurring: async (id, value) => {
       await updateTransaction(id, { is_recurring: value });
       refresh();
@@ -186,6 +243,12 @@ export async function renderDashboard(root) {
     // PATCHes that row immediately, like the recurring toggle.
     onCategorize: async (id, categoryId) => {
       await updateTransaction(id, { category_id: categoryId });
+      refresh();
+    },
+    // Blank-account rows show an inline picker (read-only mode); a choice
+    // PATCHes that row immediately, same pattern.
+    onAssignAccount: async (id, accountId) => {
+      await assignAccount(id, accountId);
       refresh();
     },
     // Tag toggles replace the row's tag set in the M2M table immediately —
@@ -204,6 +267,14 @@ export async function renderDashboard(root) {
     creditHeading.textContent = t('dash.moneyIn');
     root.appendChild(creditHeading);
     root.appendChild(transactionTable({ transactions: credits, ...tableProps }));
+  }
+
+  if (transfers.length > 0) {
+    const transferHeading = document.createElement('h2');
+    transferHeading.className = 'h5 mt-4';
+    transferHeading.textContent = t('dash.transfers');
+    root.appendChild(transferHeading);
+    root.appendChild(transactionTable({ transactions: transfers, ...tableProps }));
   }
 }
 
@@ -238,14 +309,38 @@ async function flushDirty() {
 }
 
 // Build the CSV export button. Named function so the column name for the
-// recurring flag stays in sync with the actual data.
-function csvExportBtn(debits, credits, myrTotals, categoryNames) {
+// recurring flag stays in sync with the actual data. Exports EVERY loaded row
+// (debits, credits, and transfer halves — nothing hidden); transfer rows get
+// Direction "Transfer" and the Account shows the pair "A → B".
+function csvExportBtn(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'btn btn-sm btn-outline-secondary';
   btn.id = 'csv-export-btn';
   btn.textContent = t('dash.export');
-  btn.addEventListener('click', () => downloadCsv(debits, credits, myrTotals, categoryNames));
+  btn.addEventListener('click', () =>
+    downloadCsv(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs),
+  );
+  return btn;
+}
+
+// "Move money" opens the transfer dialog; on save, pending edits flush first
+// (if edit mode is on) so a re-render never drops them.
+function transferBtn(accountList) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'transfer-add-btn';
+  btn.className = 'btn btn-sm btn-outline-secondary';
+  btn.textContent = t('col.transfer');
+  btn.addEventListener('click', () =>
+    openTransferDialog({
+      accounts: accountList,
+      onSaved: async () => {
+        if (editMode) await flushDirty();
+        refresh();
+      },
+    }),
+  );
   return btn;
 }
 
@@ -268,8 +363,29 @@ function tagsManageBtn() {
   return btn;
 }
 
-function downloadCsv(debits, credits, myrTotals, categoryNames) {
-  const rows = [...debits, ...credits];
+// "Accounts" opens the accounts manager (list, add/edit, and the Unassigned
+// assign flow). The loaded-window transactions are passed along so the manager
+// can show per-account balance estimates without another fetch.
+function accountsManageBtn(accountList, transactions) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'accounts-manage-btn';
+  btn.className = 'btn btn-sm btn-outline-secondary';
+  btn.textContent = t('accounts.manage');
+  btn.addEventListener('click', () =>
+    openAccountManager({
+      transactions,
+      onChanged: async () => {
+        if (editMode) await flushDirty();
+        refresh();
+      },
+    }),
+  );
+  return btn;
+}
+
+function downloadCsv(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs) {
+  const rows = [...debits, ...credits, ...transfers];
   const header = [
     'Date',
     'Receiver',
@@ -279,12 +395,18 @@ function downloadCsv(debits, credits, myrTotals, categoryNames) {
     'MYR',
     'Direction',
     'Sent from',
+    'Account',
     'Recurring',
     'Tags',
     'Notes',
   ];
   const body = rows.map((t) => {
     const myr = myrTotals.get(t.id);
+    const isTransfer = Boolean(t.transfer_group_id);
+    const pair = transferPairs.get(t.transfer_group_id) ?? {};
+    const account = isTransfer
+      ? `${accountNames.get(pair.source) ?? '?'} → ${accountNames.get(pair.dest) ?? '?'}`
+      : accountNames.get(t.account_id) ?? '';
     return [
       t.transaction_date,
       t.merchant_raw ?? '',
@@ -292,8 +414,9 @@ function downloadCsv(debits, credits, myrTotals, categoryNames) {
       t.amount,
       t.currency,
       myr !== null && myr !== undefined ? myr : '',
-      t.direction,
+      isTransfer ? 'Transfer' : t.direction,
       t.source_app_label ?? '',
+      account,
       t.is_recurring ? 'yes' : '',
       (t.tags ?? []).map((tag) => tag.name).join('; '),
       t.notes ?? '',

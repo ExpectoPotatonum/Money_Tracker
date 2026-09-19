@@ -24,6 +24,34 @@ const CATEGORIES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Food & Dining' },
 ];
 
+// Phase 3 accounts fixture. Order = sort_order then name, matching listAccounts.
+const ACCOUNTS = [
+  {
+    id: 'a-1',
+    name: 'TnG eWallet',
+    type: 'ewallet',
+    currency: 'MYR',
+    icon: null,
+    color: null,
+    opening_balance: 0,
+    opening_balance_date: null,
+    is_hidden: false,
+    sort_order: 1,
+  },
+  {
+    id: 'a-2',
+    name: 'HLB Debit Card',
+    type: 'credit',
+    currency: 'MYR',
+    icon: null,
+    color: null,
+    opening_balance: 0,
+    opening_balance_date: null,
+    is_hidden: false,
+    sort_order: 2,
+  },
+];
+
 const TAG_GROUPS = [
   {
     id: 'g-1',
@@ -48,6 +76,8 @@ const TRANSACTIONS = [
     merchant_display: 'Shopee',
     merchant_raw: 'SHOPEE',
     category_id: '44444444-4444-4444-8444-444444444444',
+    account_id: 'a-1', // TnG eWallet (Phase 3)
+    source_package: 'com.touchngo.tngdigital',
     transaction_date: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     source_app_label: 'TnG eWallet',
     status: 'confirmed',
@@ -64,6 +94,8 @@ const TRANSACTIONS = [
     merchant_display: 'Netflix',
     merchant_raw: 'Netflix',
     category_id: null,
+    account_id: null, // unassigned — renders the inline account picker
+    source_package: 'my.com.cimb',
     transaction_date: new Date(Date.now() - 5 * 86_400_000).toISOString(),
     source_app_label: 'CIMB Octo MY',
     status: 'confirmed',
@@ -76,6 +108,8 @@ const TRANSACTIONS = [
     merchant_display: 'Kopitiam',
     merchant_raw: 'kopitiam',
     category_id: '11111111-1111-4111-8111-111111111111',
+    account_id: 'a-1',
+    source_package: 'com.touchngo.tngdigital',
     transaction_date: new Date(Date.now() - 3 * 86_400_000).toISOString(),
     source_app_label: 'TnG eWallet',
     status: 'confirmed',
@@ -91,13 +125,55 @@ const TRANSACTIONS = [
     merchant_display: null,
     merchant_raw: null,
     category_id: null,
+    account_id: null, // unassigned
+    source_package: 'my.com.hongleongconnect.mobileconnect',
     transaction_date: new Date(Date.now() - 4 * 86_400_000).toISOString(),
     source_app_label: 'HLB Connect',
     status: 'confirmed',
   },
 ];
 
-function mockSupabase(page, { heartbeatAgeHours = 30, alerts = [] } = {}) {
+// A linked transfer pair (two-row model, 202609190003): the source half is a
+// debit on TnG eWallet (a-1), the destination half a credit on HLB Debit Card
+// (a-2). Used by the transfer-specific tests, never the base fixtures — the
+// totals/mode tests count on the base shape staying 4 plain debits.
+const TRANSFER_PAIR = [
+  {
+    id: 't-5',
+    amount: 50.0,
+    currency: 'MYR',
+    direction: 'debit',
+    merchant_display: null,
+    merchant_raw: null,
+    category_id: null,
+    account_id: 'a-1',
+    transfer_group_id: 'g-t1',
+    source_package: 'manual',
+    transaction_date: new Date(Date.now() - 86_400_000).toISOString(),
+    source_app_label: null,
+    status: 'confirmed',
+  },
+  {
+    id: 't-6',
+    amount: 50.0,
+    currency: 'MYR',
+    direction: 'credit',
+    merchant_display: null,
+    merchant_raw: null,
+    category_id: null,
+    account_id: 'a-2',
+    transfer_group_id: 'g-t1',
+    source_package: 'manual',
+    transaction_date: new Date(Date.now() - 86_400_000).toISOString(),
+    source_app_label: null,
+    status: 'confirmed',
+  },
+];
+
+function mockSupabase(
+  page,
+  { heartbeatAgeHours = 30, alerts = [], transactions = TRANSACTIONS, accounts = ACCOUNTS } = {},
+) {
   // Registered FIRST so the specific routes below still win (Playwright: last
   // registered route takes precedence). Anything unmocked that still targets
   // the fake project host gets a fast empty 200 instead of escaping to the
@@ -111,13 +187,50 @@ function mockSupabase(page, { heartbeatAgeHours = 30, alerts = [] } = {}) {
 
   page.route('**/rest/v1/transactions**', (route) => {
     const method = route.request().method();
+    if (method === 'POST') {
+      // Two-row transfer inserts land here as a JSON array; the transfer test
+      // asserts the payload, the response shape is irrelevant.
+      return route.fulfill({
+        status: 201,
+        json: { id: 'inserted-id' },
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (method === 'PATCH' || method === 'DELETE') {
       return route.fulfill({
         status: 204,
         headers: { 'content-type': 'application/json' },
       });
     }
-    return route.fulfill({ json: TRANSACTIONS, headers: { 'content-type': 'application/json' } });
+    return route.fulfill({ json: transactions, headers: { 'content-type': 'application/json' } });
+  });
+  page.route('**/rest/v1/accounts**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      return route.fulfill({
+        status: 201,
+        json: {
+          id: 'created-account',
+          ...JSON.parse(route.request().postData() ?? '{}'),
+        },
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (method === 'PATCH' || method === 'DELETE') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: accounts, headers: { 'content-type': 'application/json' } });
+  });
+  // Default package -> account map rows created by "assign all" upserts.
+  page.route('**/rest/v1/package_account_map**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      return route.fulfill({ status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    if (method === 'PATCH' || method === 'DELETE') {
+      return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
   });
   page.route('**/rest/v1/categories**', (route) =>
     route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
@@ -402,4 +515,146 @@ test('PWA manifest is linked and serves install metadata', async ({ page }) => {
   expect(manifest.name).toBe('Expense Tracker');
   expect(manifest.display).toBe('standalone');
   expect(manifest.icons.length).toBeGreaterThan(0);
+});
+
+// --- Phase 3: accounts + transfers ---
+
+test('read-only rows show account names and an inline picker for unassigned rows', async ({
+  page,
+}) => {
+  const patched = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patched.push({ url: req.url(), postData: req.postData() });
+    }
+  });
+  await openDashboard(page);
+
+  // t-1 (Shopee) is assigned to TnG eWallet (a-1) -> the name shows in the
+  // Account column (index 6: Date, Receiver, Category, Amount, MYR, Sent from, Account).
+  const shopee = page.locator('tbody tr', { hasText: 'Shopee' });
+  await expect(shopee.locator('td').nth(6)).toHaveText('TnG eWallet');
+
+  // t-2 (Netflix) is unassigned -> inline picker, and picking PATCHes at once.
+  const netflix = page.locator('tbody tr', { hasText: 'Netflix' });
+  const picker = netflix.locator('select[aria-label="Set account"]');
+  await expect(picker).toHaveCount(1);
+  await picker.selectOption('a-2');
+
+  await expect.poll(() => patched.length).toBe(1);
+  expect(patched[0].url).toContain('transactions');
+  expect(patched[0].postData).toContain('"account_id":"a-2"');
+});
+
+test('edit mode: changing the account issues a PATCH for that row', async ({ page }) => {
+  const patched = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patched.push({ url: req.url(), postData: req.postData() });
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#edit-mode-toggle');
+  // The first row (t-1) is on TnG eWallet (a-1); move it to HLB Debit Card.
+  const accountSel = page
+    .locator('tbody tr')
+    .first()
+    .locator('select[aria-label="Set account"]');
+  await accountSel.selectOption('a-2');
+
+  await page.click('#edit-mode-toggle');
+  await expect.poll(() => patched.length).toBe(1);
+  expect(patched[0].postData).toContain('"account_id":"a-2"');
+});
+
+test('transfer halves render in their own section, as A→B, and never move the totals', async ({
+  page,
+}) => {
+  await openDashboard(page, { transactions: [...TRANSACTIONS, ...TRANSFER_PAIR] });
+
+  await expect(page.locator('h2', { hasText: 'Transfers' })).toHaveCount(1);
+  // Both halves show the pair display in the Account column (index 6).
+  const transferRows = page.locator('tbody tr', { hasText: 'Transfer' });
+  await expect(transferRows).toHaveCount(2);
+  await expect(transferRows.nth(0).locator('td').nth(6)).toHaveText(
+    '⇄ TnG eWallet → HLB Debit Card',
+  );
+  await expect(transferRows.nth(1).locator('td').nth(6)).toHaveText(
+    '⇄ TnG eWallet → HLB Debit Card',
+  );
+
+  // The RM 50 halves must NOT move the RM 68.00 total (transfers are internal).
+  await expect(page.locator('#total-myr')).toHaveText('RM 68.00');
+});
+
+test('transfer dialog creates two linked rows sharing a transfer_group_id', async ({
+  page,
+}) => {
+  const posts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/transactions')) {
+      posts.push({ url: req.url(), postData: req.postData() });
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#transfer-add-btn');
+  const dialog = page.locator('dialog');
+  await expect(dialog).toBeVisible();
+  // From defaults to TnG eWallet (a-1), To to HLB Debit Card (a-2).
+  const amount = dialog.locator('input[type="number"]').first();
+  await amount.fill('50');
+  await dialog.locator('#transfer-save-btn').click();
+
+  await expect.poll(() => posts.length).toBe(1);
+  const halves = JSON.parse(posts[0].postData);
+  expect(halves).toHaveLength(2);
+  expect(halves[0].transfer_group_id).toBe(halves[1].transfer_group_id);
+  expect(halves[0].direction).toBe('debit');
+  expect(halves[1].direction).toBe('credit');
+  expect(halves[0].account_id).toBe('a-1');
+  expect(halves[1].account_id).toBe('a-2');
+  expect(halves[0].amount).toBe(50);
+  expect(halves[1].amount).toBe(50);
+  expect(halves[0].source_package).toBe('manual');
+});
+
+test('accounts manager lists accounts, adds one, and assigns an unassigned package', async ({
+  page,
+}) => {
+  const accountPosts = [];
+  const patches = [];
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().includes('/rest/v1/accounts')) {
+      accountPosts.push(req.postData());
+    }
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patches.push(req.postData());
+    }
+  });
+  await openDashboard(page);
+
+  await page.click('#accounts-manage-btn');
+  const manager = page.locator('dialog').first();
+  await expect(manager).toContainText('TnG eWallet');
+  await expect(manager).toContainText('HLB Debit Card');
+
+  // --- Unassigned flow: HLB Connect rows (t-4, account_id null) assign-all to
+  // HLB Debit Card (a-2). The row shows the app label + an account dropdown.
+  const unassignedRow = manager.locator('[data-pkg="my.com.hongleongconnect.mobileconnect"]');
+  await expect(unassignedRow).toHaveCount(1);
+  await unassignedRow.locator('select.form-select').selectOption('a-2');
+  await unassignedRow.getByRole('button', { name: /Assign all/ }).click();
+  await expect.poll(() => patches.length).toBe(1);
+  expect(patches[0]).toContain('"account_id":"a-2"');
+
+  // --- Add account form (a second <dialog> stacked above the manager) ---
+  await page.getByRole('button', { name: /^Add account$/ }).click();
+  const form = page.locator('dialog').last();
+  await form.locator('input[type="text"]').first().fill('GrabPay');
+  await form.getByRole('button', { name: 'Save account' }).click();
+
+  await expect.poll(() => accountPosts.length).toBe(1);
+  expect(accountPosts[0]).toContain('"name":"GrabPay"');
 });

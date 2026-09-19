@@ -40,10 +40,15 @@ export function transactionTable({
   myrTotals = new Map(),
   editMode = false,
   allTags = [],
+  accounts = [],
+  accountNames = new Map(),
+  transferPairs = new Map(),
   onDirty = null,
   onDelete = null,
+  onDeleteTransfer = null,
   onToggleRecurring = null,
   onCategorize = null,
+  onAssignAccount = null,
   onSetTags = null,
 }) {
   const table = document.createElement('table');
@@ -57,6 +62,7 @@ export function transactionTable({
     <th class="text-end">${tr('col.amount')}</th>
     <th class="text-end">${tr('col.myr')}</th>
     <th>${tr('col.sentFrom')}</th>
+    <th>${tr('col.account')}</th>
     <th>${tr('col.tags')}</th>
     <th>${tr('col.notes')}</th>
     <th></th>
@@ -76,14 +82,38 @@ export function transactionTable({
       merchant_raw: t.merchant_raw ?? '',
       category_id: t.category_id ?? '',
       source_app_label: t.source_app_label ?? '',
+      account_id: t.account_id ?? '',
       notes: t.notes ?? '',
     };
   }
 
   for (const t of transactions) {
     const tr = document.createElement('tr');
+    const isTransfer = Boolean(t.transfer_group_id);
 
-    if (!editMode) {
+    if (isTransfer) {
+      // Transfer halves are locked rows — same read-only appearance in both
+      // modes (the pair is edited through the Transfer dialog, not per-cell).
+      // The only action is delete, which removes BOTH halves via
+      // onDeleteTransfer (a per-cell delete would orphan the other half).
+      tr.appendChild(dateCell(t));
+      tr.appendChild(merchantCell(t));
+      tr.appendChild(categoryCell(t, categoryNames));
+      tr.appendChild(amountCell(t));
+      tr.appendChild(myrCell(t, myrTotals));
+      tr.appendChild(sourceCell(t));
+      tr.appendChild(accountCell(t, accounts, accountNames, transferPairs));
+      tr.appendChild(tagsCell(t));
+      tr.appendChild(notesCell(t));
+      tr.appendChild(
+        actionCell({
+          onDelete:
+            editMode && onDeleteTransfer
+              ? () => onDeleteTransfer(t.transfer_group_id)
+              : null,
+        }),
+      );
+    } else if (!editMode) {
       // --- Read-only row (today's appearance + a Notes column) ---
       tr.appendChild(dateCell(t));
       tr.appendChild(merchantCell(t));
@@ -91,6 +121,7 @@ export function transactionTable({
       tr.appendChild(amountCell(t));
       tr.appendChild(myrCell(t, myrTotals));
       tr.appendChild(sourceCell(t));
+      tr.appendChild(accountCell(t, accounts, accountNames, transferPairs));
       tr.appendChild(tagsCell(t));
       tr.appendChild(notesCell(t));
       tr.appendChild(actionCell());
@@ -109,6 +140,7 @@ export function transactionTable({
       tr.appendChild(amountEditCell(draft, report));
       tr.appendChild(myrCell(t, myrTotals)); // MYR recomputed on refresh, not editable
       tr.appendChild(sourceEditCell(draft, report));
+      tr.appendChild(accountEditCell(draft, accounts, report));
       tr.appendChild(tagsEditCell(t, allTags));
       tr.appendChild(notesEditCell(draft, report));
       tr.appendChild(
@@ -138,6 +170,12 @@ export function transactionTable({
 
   function merchantCell(t) {
     const td = document.createElement('td');
+    // Transfer halves have no merchant by design — show the transfer label
+    // instead of the "Unknown" fallback.
+    if (t.transfer_group_id) {
+      td.textContent = tr('col.transfer');
+      return td;
+    }
     // Prefer the raw "Name/Bank" text when it carries a '/' combo (CIMB
     // DuitNow person+source-bank format): render it as "Name - Bank". Otherwise
     // fall back to the normalized display name. Edit mode still edits raw.
@@ -153,6 +191,11 @@ export function transactionTable({
 
   function categoryCell(t, cats) {
     const td = document.createElement('td');
+    // Halves carry no category (owner decision #4) and never show a picker.
+    if (t.transfer_group_id) {
+      td.textContent = '—';
+      return td;
+    }
     if (t.category_id && cats.get(t.category_id)) {
       td.textContent = cats.get(t.category_id);
       return td;
@@ -201,6 +244,12 @@ export function transactionTable({
   function sourceCell(t) {
     const td = document.createElement('td');
     td.className = 'text-muted small';
+    // Halves are manual rows with no source label — a source here would imply
+    // a payment method, which a transfer isn't.
+    if (t.transfer_group_id) {
+      td.textContent = '—';
+      return td;
+    }
     td.textContent = t.source_app_label ?? t.source_package;
     return td;
   }
@@ -216,6 +265,76 @@ export function transactionTable({
         },
       }),
     );
+    return td;
+  }
+
+  // Read-only Account cell. Transfer halves show the pair "A → B" (both sides
+  // are discovered by the view and passed in via transferPairs); other rows
+  // show their single account, or — when unassigned — an inline picker that
+  // PATCHes immediately via onAssignAccount (mirror of the category picker).
+  function accountCell(t, accounts, accountNames, transferPairs) {
+    const td = document.createElement('td');
+    if (t.transfer_group_id) {
+      const pair = transferPairs.get(t.transfer_group_id) ?? {};
+      const a = accountNames.get(pair.source) ?? '?';
+      const b = accountNames.get(pair.dest) ?? '?';
+      td.className = 'text-nowrap';
+      td.title = tr('col.transfer');
+      td.textContent = `⇄ ${a} → ${b}`;
+      return td;
+    }
+    if (t.account_id && accountNames.get(t.account_id)) {
+      td.textContent = accountNames.get(t.account_id);
+      return td;
+    }
+    if (onAssignAccount && accounts.length > 0) {
+      const select = document.createElement('select');
+      select.className = 'form-select form-select-sm';
+      select.setAttribute('aria-label', tr('col.setAccount'));
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = tr('col.pick');
+      select.appendChild(placeholder);
+      for (const a of accounts) {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.name;
+        select.appendChild(opt);
+      }
+      select.addEventListener('change', () => {
+        if (select.value) onAssignAccount(t.id, select.value);
+      });
+      td.appendChild(select);
+    } else {
+      td.textContent = '—';
+    }
+    return td;
+  }
+
+  // Edit-mode Account dropdown ("—" = Unassigned). Changes ride the batched
+  // PATCH that flushes when edit mode is toggled off.
+  function accountEditCell(draft, accounts, report) {
+    const td = document.createElement('td');
+    const select = document.createElement('select');
+    select.className = 'form-select form-select-sm';
+    select.setAttribute('aria-label', tr('col.setAccount'));
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '—';
+    select.appendChild(empty);
+    for (const a of accounts) {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      opt.selected = a.id === draft.account_id;
+      select.appendChild(opt);
+    }
+    select.value = draft.account_id;
+    select.addEventListener('change', () => {
+      draft.account_id = select.value;
+      report();
+    });
+    td.appendChild(select);
     return td;
   }
 
@@ -468,6 +587,9 @@ function normalizeDraft(draft, original) {
   }
   if ((draft.category_id || null) !== (original.category_id ?? null)) {
     patch.category_id = draft.category_id || null;
+  }
+  if ((draft.account_id || null) !== (original.account_id ?? null)) {
+    patch.account_id = draft.account_id || null;
   }
   const notes = (draft.notes ?? '').slice(0, 255) || null;
   if (notes !== (original.notes ?? null)) {

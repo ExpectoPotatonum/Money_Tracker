@@ -395,9 +395,8 @@ Legend (per item): ✅ **done** in tree · 🔨 **build** (cheap/additive) · �
      the route mocks; dev stays SW-free). e2e: manifest link present + `/manifest.webmanifest` JSON.
      23/23 e2e green.
 3. **Phase 3 — Accounts + transfer model** — owner decisions (Q6 + follow-up): pulled *before* balance
-   trends. New `accounts` table (+GRANT +RLS, §17), `account_id` on transactions, transfer direction
-   with cross-currency source/dest amounts, package→account default mapping + backfill, opening
-   balance + reconcile adjustment. Largest item; designed carefully as its own phase.
+   trends. **BUILT + GATED 2026-09-19 (awaiting owner commit/push)** — plan in §4.8; design pulled
+   live from ezBookkeeping.
 4. **Phase 4 — Balance trends + budgets + charts** — reads accounts; net-worth + per-account lines,
    budgets table, Chart.js views.
 5. **Phase 5 — Android voice (SpeechRecognizer)** — completes the deferred half of voice; on-device
@@ -567,6 +566,220 @@ corrected by reconciliation.
 - **Cross-currency transfer FX**: **freeze the rate at the transfer's date** (consistent with ADR
   0003) and **store it on the transfer row**; both account books use that stored rate. No live
   re-conversion for transfers.
+
+## 4.8 — Phase 3 (Accounts + transfer model) — BUILD PLAN (2026-09-19, awaiting go)
+
+Owner decisions from §4.6/§4.7, refined against live ezBookkeeping code (MIT, `mayswind/ezbookkeeping`):
+`src/models/account.ts` (account entity: category asset/liability, currency, balance+balanceTime,
+lastReconciledTime, comment, displayOrder, visible), `src/core/account.ts` (9 categories, incl. their
+asset/liability flags and per-category default icons), `src/stores/account.ts` (list/save/hide/delete/
+reorder store), `src/views/desktop/accounts/list/dialogs/EditDialog.vue` (account form fields), and
+`pkg/models/transaction.go` + `src/models/transaction.ts` (**the transfer storage detail that reshaped
+this design — see §4.8.2**). BeeCount (BSL) = ideas only.
+
+### 4.8.1 What we're building (scope of this phase)
+
+A real `accounts` table + the two-sided transfer model decided in §4.6/§4.7, the write path to create
+and edit both (web), and the ripples through totals/CSV/edit mode. **Balance *charts*/net-worth are
+Phase 4** — reads over this schema (`opening_balance + Σ(credits) − Σ(debits)`, §4.7.1). This phase
+only carries the accounts UI + transfers + assignment; the manager may show a "Balance now (est.)" read
+since it's a cheap client-side sum of already-loaded rows.
+
+Transfers come **only** from manual/voice entry (§4.6) — a dedicated **Transfer dialog** (web). The NL
+modal gains the §4.7.6 requirement: **account chosen *before* parsing**, required (no "Unassigned").
+
+### 4.8.2 Key design decision — two-row LINKED transfer, not a single `direction='transfer'` row
+
+The §4.7.2 decision text offered "a distinct `transfer_id` (**or** `direction='transfer'` with
+source/dest accounts)". Pulling ezBookkeeping's DB storage settled it: on disk a transfer is **two
+normal single-account rows** — `TRANSFER_DB_TYPE_TRANSFER_OUT` (account=source, amount=source amount,
+`RelatedAccountId`=dest, `RelatedAccountAmount`=dest amount) and `TRANSFER_IN` mirrored — recombined
+into one client object at the API boundary. Consequences for us:
+
+- `direction` **stays `('debit','credit')`** — no check widening, no new nullable source/dest columns
+  on every row, no union-based balance queries in Phase 4. A transfer is just two rows sharing a
+  `transfer_group_id`: half A `credit` (into dest, amount=dest_amount/currency), half B `debit` (out
+  of source, amount=source_amount/currency). Each account's balance = plain `SUM` over `account_id`.
+- Cross-currency is free: each half carries its own amount+currency. The rate is implied
+  (dest/source) and shown in the dialog; the §4.7.7 "store the rate so the books agree" is satisfied
+  by storing both amounts — the two books agree **by construction**, and Phase 4 net-worth converts
+  each half independently under ADR 0003. (No separate `transfer_rate` column; derivable for CSV.)
+- Both halves are manual rows (`raw_notification_id NULL`, `source_package='manual'`,
+  `confidence='low'`) — the existing `chk_manual_source` (202609060003) passes untouched.
+
+Deviation to confirm (recommend yes): ez auto-creates nothing; pairing is app-enforced. We add a
+`transfer_orphans` QA view (halves without a partner) rather than a DB pair trigger — an AFTER INSERT
+trigger would fire mid-pair (after the first half of a two-statement insert) and reject valid writes.
+
+### 4.8.3 Migration A — `supabase/migrations/202609190002_accounts.sql`
+
+Accounts + package map, both GRANT + RLS per AGENTS.md §17.
+
+```sql
+create table accounts (
+  id                    uuid primary key default gen_random_uuid(),
+  user_id               uuid not null default auth.uid() references auth.users(id),
+  name                  text not null,
+  type                  text not null
+                          check (type in ('cash','checking','savings','credit','ewallet','virtual','investment')),
+  currency              text not null default 'MYR',
+  icon                  text,                 -- emoji, optional
+  color                 text,                 -- hex for UI chip, optional
+  opening_balance       numeric(12,2) not null default 0,
+  opening_balance_date  date,
+  is_hidden             boolean not null default false,
+  sort_order            int not null default 0,
+  last_reconciled_at    timestamptz,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now(),
+  unique (user_id, name)
+);
+grant select, insert, update, delete on accounts to authenticated;
+alter table accounts enable row level security;
+create policy "owner_only" on accounts
+  for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- package -> account default mapping (the §4.7.2 "package_account_map"). The parse
+-- trigger joins this by (user_id, package_name) to auto-fill account_id on captures.
+create table package_account_map (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null default auth.uid() references auth.users(id),
+  package_name  text not null,
+  account_id    uuid not null references accounts(id),
+  created_at    timestamptz not null default now(),
+  unique (user_id, package_name)
+);
+grant select, insert, update, delete on package_account_map to authenticated;
+alter table package_account_map enable row level security;
+create policy "owner_only" on package_account_map
+  for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create index on transactions (account_id);
+```
+
+- **Type list** maps the owner's 7 (§4.7.2) over ez's 9 (their `Debt`/`Receivables`/`CertificateOfDeposit`
+  are out of v1 scope; can be added to the check later). ez's asset/liability split informs Phase 4
+  (`credit` = liability → negate at display, ez `pkg/models` sign handling). The `Transfers` credit-side
+  category (202608300001) is NOT used for transfer halves — category stays NULL in v1 (a dedicated
+  transfer category is ez's feature for net-worth reporting we don't need yet).
+- **No seeds in the migration.** Migrations run as `postgres` with `auth.uid() = NULL`, so seeding
+  would violate owner_only RLS. Default accounts instead come from the **web owner flow** (§4.8.5:
+  "Add suggested accounts" — Cash + the 4 known packages) which inserts with the correct user id by
+  construction. This is the recommended deviation from the §4.7.2 "auto-created on first sighting":
+  that auto-creation would live in the parse trigger with guessed names/types and litter the account
+  list; instead the trigger **resolves** the map if one exists and the web assigns/creates explicitly.
+
+### 4.8.4 Migration B — `supabase/migrations/202609190003_transfer_groups.sql`
+
+```sql
+alter table transactions add column transfer_group_id uuid;
+-- Each half is a NORMAL row in its own account's ledger (that's what makes the
+-- plain-SUM balance work in Phase 4): the half leaving the source is a debit
+-- with account_id = source; the half arriving at the destination is a credit
+-- with account_id = destination. So halves carry account_id (never NULL) and
+-- no merchant/category/notification link.
+alter table transactions add constraint chk_transfer_half check (
+  (transfer_group_id is null)
+  or
+  (transfer_group_id is not null and direction in ('debit','credit')
+     and account_id is not null
+     and raw_notification_id is null and merchant_raw is null and category_id is null)
+);
+create index on transactions (transfer_group_id);
+```
+
+Plus Migration C — `202609190004_parser_account_default.sql`: recreate `parse_raw_notification`
+(following the existing `create or replace function` pattern from 2c/20260901xxxx) so a capture's
+transaction sets `account_id` from `package_account_map` when a row exists for
+(`user_id = auth.uid()`, `new.package_name`); otherwise NULL = "Unassigned". No account auto-creation
+in the trigger (see above). Re-running is safe: maps are stable, new captures just resolve.
+
+### 4.8.5 Web build
+
+- **`api/accounts.js`** — `listAccounts()` (order by sort_order, name), `saveAccount` (insert/update),
+  `deleteAccount(id)` (web refuses while referenced; returns in-use count),
+  `listPackageMap()`, `setPackageMap(package, accountId)`, `clearPackageMap(package)`,
+  `unassignedPackages()` (distinct `source_package` of rows with `account_id IS NULL` + counts),
+  `assignPackageRows(package, accountId)` (batch UPDATE of `account_id` on those rows),
+  `assignAccount(txId, accountId)` (single-row PATCH — the "-- Pick…" pattern), and
+  `insertTransfer({sourceAccountId, destAccountId, sourceAmount, sourceCurrency, destAmount,
+  destCurrency, date, notes})` → **two inserts sharing a web-generated `transfer_group_id`**:
+  the source half (`account_id = sourceAccountId`, `direction='debit'`, amount=sourceAmount,
+  currency=sourceCurrency) and the destination half (`account_id = destAccountId`,
+  `direction='credit'`, amount=destAmount, currency=destCurrency). + `deleteTransfer(groupId)`
+  (one DELETE by `transfer_group_id` removes both halves).
+- **`components/accountManager.js`** (header button beside Tags): list (icon, name, type, currency,
+  opening balance, est. balance now, hidden) — Add/Edit modal (name; type of the 7; currency from the
+  existing `currencies` table; icon emoji; color; opening_balance + date; hidden; sort_order) — Delete
+  (blocked with "still N transactions" hint; reassign first) — **Unassigned section**: distinct
+  packages with counts, per row "Create account for \<app\>" (create + assign in one click) and
+  "Assign all from \<app\> → \<account\>" (existing account). This is the §4.7 "auto default per
+  package, overridable in edit mode" — deterministic, owner-controlled.
+- **`transactionTable.js`** — new **Account** column. Read-only: account name or "-- Pick…" dropdown
+  (immediate PATCH, same pattern as the inline category picker). Edit mode: Account dropdown
+  (Unassigned + accounts) joins the batch PATCH. **Transfer rows** render a "⇄ Transfer" badge and
+  "A → B" in the Account cell (pair resolved client-side by `transfer_group_id` from already-loaded
+  rows), are excluded from per-cell edits, and their Delete removes both halves via
+  `deleteTransfer` (confirm dialog, same visuals).
+- **`components/nlModal.js`** — §4.7.6: required **Account** selector above the sentence textarea;
+  insert pins `account_id`. Voice path unchanged (same modal).
+- **`components/transferDialog.js`** + **"Transfer" button** next to "Add from text" — from account,
+  to account, amount + currency (fixed to source account's currency); same-currency by default with a
+  "different currency" toggle unlocking dest currency + dest amount; date defaults today (MYT). Rate
+  shown read-only (dest/source) when currencies differ.
+- **`views/dashboard.js`** — debits/credits filters add `&& !t.transfer_group_id` (totals never see
+  transfers); CSV gains an **Account** column and exports transfer rows with Direction="Transfer",
+  Account="A → B", Amount=source amount (all rows exported — nothing hidden).
+- **`lib/i18n.js`** — en/zh for every new string.
+
+### 4.8.6 Ripples checklist (explicit, so nothing is missed)
+
+1. `dashboard.js` totals (debit/credit filters) — exclude transfers.
+2. `dashboard.js` CSV — Account column; transfer rows; keep Tags column.
+3. `transactionTable.js` — Account column, transfer badge/pair, edit-mode guards, delete-both.
+4. `nlModal.js` — account picker + pinned `account_id` on the manual insert.
+5. Parse trigger — resolves `package_account_map` (Migration C); review inbox untouched (accounts live
+   on transactions, §4.7.4).
+6. Edit-mode batch PATCH — account field participates; transfer halves never per-cell edited.
+7. `chk_manual_source` — unaffected (transfer halves are manual+low).
+8. e2e — manager CRUD + assign-all flow; transfer dialog writes exactly two rows sharing a
+   `transfer_group_id` and totals exclude them; account picker PATCH; CSV columns.
+
+### 4.8.7 Owner decision points before build (recommendations inline)
+
+1. **Two-row linked transfer** (recommend) vs. the literal single-row `direction='transfer'` — two-row
+   matches ez's actual DB, keeps balance math trivial, avoids widening the direction check. The
+   decision record already allowed "a distinct `transfer_id`".
+2. **No trigger auto-create of accounts** (recommend) — trigger *resolves* the map; creation +
+   assignment is web one-click. Literal "auto-created on first sighting" would guess names/types.
+3. **Sent from stays editable** (recommend) — Selectable Source shipped 2026-09-06 (tested); §4.7.7
+   said it "stops being an edit control" before Account existed. Account is now the structured
+   classification; keeping the label editable is harmless provenance. (Confirm: keep vs. read-only.)
+4. **Transfers: category NULL** (recommend) — ez's transfer category is for net-worth reporting we
+   won't need until Phase 4 decides otherwise.
+5. **No DB pair-enforcement** on `transfer_group_id` (recommend) — app-enforced + `transfer_orphans`
+   QA view.
+6. **Suggested default accounts from the web, not the migration** (recommend) — correct `user_id` by
+   construction under RLS.
+
+> **CONFIRMED 2026-09-19 — all six decided as recommended (1=A, 2=A, 3=A, 4=A, 5=A, 6=A).** A fourth
+> row was added to the batch: **transfer halves DO carry `account_id`** (their own ledger's account,
+> §4.8.4) — every half is a normal single-account row, so Phase 4 balance stays a plain SUM and
+> transfer halves are correctly excluded from the dashboard's Unassigned list.
+>
+> **BUILD STATUS — 2026-09-19, gate passed, awaiting owner commit/push.**
+> - ✅ **lint** clean · ✅ **build** (vite) clean · ✅ **e2e 28/28** (Playwright) — incl. the new
+>   Phase 3 specs: read-only account names + inline "-- Pick…" picker for unassigned rows, edit-mode
+>   account PATCH, transfer halves in their own A→B section that never move the totals, transfer
+>   dialog writing exactly two rows sharing a `transfer_group_id`, accounts manager list/add +
+>   assign-unassigned-package flow.
+> - 🔧 **Bug found & fixed during apply**: `transactions.account_id` was referenced by all three
+>   migrations (002 index, 003 `chk_transfer_half`, 004 trigger insert) but **never added**. Fixed in
+>   `202609190002_accounts.sql` — `alter table transactions add column account_id uuid references
+>   accounts(id);` before the index. The e2e suite mocks the Supabase REST layer, so a real-DB apply
+>   was what surfaced it; a DB smoke test would be a good permanent gate.
+> - State: **local commit only — NOT pushed until the owner says so.** The fixed migrations still need
+>   applying to Supabase (cleanup + 002→003→004 if a failed run left partial artifacts).
 
 
 

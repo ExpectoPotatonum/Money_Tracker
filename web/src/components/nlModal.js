@@ -118,8 +118,35 @@ function hookUpVoice({ text, status, lang }) {
 // manual transaction (source_package 'manual', no raw_notifications link —
 // needs the 202609060003 migration). Manual rows carry confidence 'low' (no
 // notification cross-check) and are ready for normal edit-mode correction.
-export function openNlModal({ categoryNames, onSaved = null }) {
+export function openNlModal({ categoryNames, accounts = [], onSaved = null }) {
   const { dialog, body, footer } = openModal({ title: t('nl.title') });
+
+  // Phase 3: the destination account is REQUIRED for a manual row — no
+  // "Unassigned" for NL/voice entries (only parsed notifications can land
+  // unassigned, pending the accounts manager's assign flow). Chosen before
+  // parsing, per §4.7.6, and pinned on the row at save.
+  const accountSel = document.createElement('select');
+  accountSel.id = 'nl-account';
+  accountSel.className = 'form-select mb-2';
+  const accPlaceholder = document.createElement('option');
+  accPlaceholder.value = '';
+  accPlaceholder.textContent = t('nl.account');
+  accountSel.appendChild(accPlaceholder);
+  for (const acc of accounts) {
+    const opt = document.createElement('option');
+    opt.value = acc.id;
+    opt.textContent = acc.name;
+    accountSel.appendChild(opt);
+  }
+  accountSel.value = '';
+  if (accounts.length === 0) {
+    accountSel.disabled = true;
+    const hint = document.createElement('div');
+    hint.className = 'small text-muted mb-2';
+    hint.textContent = t('transfer.noAccounts');
+    body.appendChild(hint);
+  }
+  body.appendChild(accountSel);
 
   const text = document.createElement('textarea');
   text.className = 'form-control';
@@ -151,6 +178,11 @@ export function openNlModal({ categoryNames, onSaved = null }) {
   const isZh = getSettings().lang === 'zh';
   hookUpVoice({ text, status, lang: isZh ? 'zh' : 'en' });
 
+  // Captured at parse time — the preview replaces the form body, so the chosen
+  // account is remembered here and pinned on the row at save.
+  let chosenAccountId = null;
+  let chosenAccountName = '';
+
   const parseBtn = document.createElement('button');
   parseBtn.type = 'button';
   parseBtn.className = 'btn btn-primary';
@@ -168,6 +200,12 @@ export function openNlModal({ categoryNames, onSaved = null }) {
 
   parseBtn.addEventListener('click', async () => {
     if (!text.value.trim()) return;
+    if (!accountSel.value) {
+      status.textContent = t('nl.requireAccount');
+      status.classList.add('text-danger');
+      accountSel.focus();
+      return;
+    }
     if (!llmConfigured()) {
       status.textContent = t('settings.ai.keyMissing');
       status.classList.add('text-danger');
@@ -183,6 +221,11 @@ export function openNlModal({ categoryNames, onSaved = null }) {
     parseBtn.disabled = true;
     status.textContent = t('nl.parsing');
     status.classList.remove('text-danger');
+
+    // Remember the account (its <select> is destroyed by the preview render).
+    chosenAccountId = accountSel.value;
+    chosenAccountName =
+      accountSel.options[accountSel.selectedIndex]?.textContent ?? chosenAccountId;
 
     const { draft, error } = await parseTransactionText(text.value.trim(), categoryNames);
     if (error) {
@@ -214,6 +257,11 @@ export function openNlModal({ categoryNames, onSaved = null }) {
     note.className = 'small text-muted mb-3';
     note.textContent = t('nl.preview');
     body.appendChild(note);
+
+    const accReadout = document.createElement('div');
+    accReadout.className = 'small text-muted mb-2';
+    accReadout.textContent = `${t('nl.account')}: ${chosenAccountName}`;
+    body.appendChild(accReadout);
 
     const fields = document.createElement('div');
     fields.className = 'row g-2';
@@ -282,6 +330,7 @@ export function openNlModal({ categoryNames, onSaved = null }) {
         direction: direction.input.value,
         merchant_raw: merchant.input.value.trim() || null,
         category_id: categoryIdFromLabel(category.input.value),
+        account_id: chosenAccountId,
         transaction_date: fromDateTimeLocal(date.input.value),
         notes: notes.input.value.trim() || null,
         source_package: 'manual',

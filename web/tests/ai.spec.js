@@ -23,6 +23,12 @@ const CATEGORIES = [
   { id: '11111111-1111-4111-8111-111111111111', name: 'Food & Dining' },
 ];
 
+// Phase 3 accounts fixture — the NL modal requires one before parsing.
+const ACCOUNTS = [
+  { id: 'a-1', name: 'TnG eWallet', type: 'ewallet', currency: 'MYR' },
+  { id: 'a-2', name: 'HLB Debit Card', type: 'credit', currency: 'MYR' },
+];
+
 const LLM_JSON = JSON.stringify({
   usable: true,
   amount: 45.8,
@@ -63,6 +69,22 @@ function mockSupabase(page, { rawNotifications = [] } = {}) {
   page.route('**/rest/v1/categories**', (route) =>
     route.fulfill({ json: CATEGORIES, headers: { 'content-type': 'application/json' } }),
   );
+  // The dashboard fetches accounts on every render (Phase 3); the NL modal's
+  // required account picker reads them from what the dashboard passed.
+  page.route('**/rest/v1/accounts**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      return route.fulfill({ status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: ACCOUNTS, headers: { 'content-type': 'application/json' } });
+  });
+  page.route('**/rest/v1/package_account_map**', (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      return route.fulfill({ status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    return route.fulfill({ json: [], headers: { 'content-type': 'application/json' } });
+  });
   // The dashboard fetches tag groups on every render (Phase 1); no fixtures
   // needed — an empty list means no tag pickers appear.
   page.route('**/rest/v1/tag_groups**', (route) =>
@@ -203,6 +225,8 @@ test('NL bookkeeping: sentence -> AI preview -> insert a manual transaction', as
   await page.click('#nl-add-btn');
   const dialog = page.locator('dialog');
   await dialog.locator('textarea').fill('paid RM 45.80 for Tingkatz at the kedai runcit');
+  // Phase 3: the destination account is required BEFORE parsing.
+  await dialog.locator('#nl-account').selectOption('a-1');
   await page.click('#nl-parse-btn');
 
   // The AI-parsed preview appears (amount + receiver prefilled).
@@ -216,6 +240,7 @@ test('NL bookkeeping: sentence -> AI preview -> insert a manual transaction', as
   expect(posts[0]).toContain('"source_package":"manual"');
   expect(posts[0]).toContain('"source_app_label":"Cash"');
   expect(posts[0]).toContain('"confidence":"low"');
+  expect(posts[0]).toContain('"account_id":"a-1"');
 });
 
 test('NL bookkeeping: the source can be switched to a custom label', async ({ page }) => {
@@ -230,6 +255,7 @@ test('NL bookkeeping: the source can be switched to a custom label', async ({ pa
   await page.click('#nl-add-btn');
   const dialog = page.locator('dialog');
   await dialog.locator('textarea').fill('paid rm50 for koayiaoteng at 7village');
+  await dialog.locator('#nl-account').selectOption('a-1');
   await page.click('#nl-parse-btn');
   await expect(page.locator('#nl-save-btn')).toBeVisible();
 
@@ -248,6 +274,9 @@ test('LLM model 404 shows a diagnostic instead of the generic parse failure', as
   await page.click('#nl-add-btn');
   const dialog = page.locator('dialog');
   await dialog.locator('textarea').fill('paid rm50 for koayiaoteng at 7village');
+  // The account check runs BEFORE llmConfigured, so the 404 test must pick an
+  // account first to reach the model call.
+  await dialog.locator('#nl-account').selectOption('a-1');
   await page.click('#nl-parse-btn');
 
   // The 404 (with the auto-fallback retry exhausted) surfaces as "model
