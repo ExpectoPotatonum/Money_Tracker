@@ -1,6 +1,7 @@
 import {
   getTransactions,
   getCategories,
+  getCategoryTree,
   updateTransaction,
   deleteTransaction,
 } from '../api/transactions.js';
@@ -8,6 +9,7 @@ import { getCurrencies } from '../api/currencies.js';
 import { getLatestHeartbeat } from '../api/heartbeat.js';
 import { getOpenAlerts, dismissAlert } from '../api/alerts.js';
 import { listAccounts, assignAccount, deleteTransfer } from '../api/accounts.js';
+import { listBudgets } from '../api/budgets.js';
 import { convert } from '../utils/fx.js';
 import { formatMoney, setCurrencySymbols } from '../utils/format.js';
 import { alertBanner } from '../components/common.js';
@@ -15,6 +17,7 @@ import { transactionTable } from '../components/transactionTable.js';
 import { openNlModal } from '../components/nlModal.js';
 import { openTagManager } from '../components/tagManager.js';
 import { openAccountManager } from '../components/accountManager.js';
+import { openBudgetManager } from '../components/budgetManager.js';
 import { openTransferDialog } from '../components/transferDialog.js';
 import { getTagGroups, setTransactionTags } from '../api/tags.js';
 import { t } from '../lib/i18n.js';
@@ -50,6 +53,7 @@ export async function renderDashboard(root) {
     currencies,
     tagGroups,
     accounts,
+    budgets,
   ] = await Promise.all([
     getTransactions({ withinDays: 30, limit: 100 }),
     getCategories(),
@@ -58,6 +62,7 @@ export async function renderDashboard(root) {
     getCurrencies(),
     getTagGroups(),
     listAccounts(),
+    listBudgets(),
   ]);
   setCurrencySymbols(currencies);
 
@@ -187,6 +192,7 @@ export async function renderDashboard(root) {
     editBtn,
     tagsManageBtn(),
     accountsManageBtn(accounts, transactions),
+    budgetsManageBtn(),
     csvExportBtn(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs),
   );
   const total = document.createElement('div');
@@ -209,6 +215,13 @@ export async function renderDashboard(root) {
         message: `${skipped} ${t('dash.skippedSuffix')}`,
       }),
     );
+  }
+
+  // Phase 4 budgets (§4.9): inline progress bars, computed at display time.
+  // Only rendered when budgets exist — a short extra fetch of the current
+  // calendar month's rows (precise month-start filter, unlike the 30-day view).
+  if (budgets.length > 0) {
+    root.appendChild(await budgetsSection(budgets));
   }
 
   const tableProps = {
@@ -382,6 +395,135 @@ function accountsManageBtn(accountList, transactions) {
     }),
   );
   return btn;
+}
+
+// "Budgets" opens the budget manager (overall + per-category targets). The
+// spend-vs-budget bars render from the same table the manager edits.
+function budgetsManageBtn() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'budgets-manage-btn';
+  btn.className = 'btn btn-sm btn-outline-secondary';
+  btn.textContent = t('budgets.manage');
+  btn.addEventListener('click', () =>
+    openBudgetManager({
+      onChanged: async () => {
+        if (editMode) await flushDirty();
+        refresh();
+      },
+    }),
+  );
+  return btn;
+}
+
+// Budgets section (Phase 4, §4.9): one progress bar per budget — overall
+// (category_id NULL) or per-category. Parent budgets count child-category
+// spend (decision 3). Read-only, computed at display time; over-budget bars
+// turn danger-coloured.
+async function budgetsSection(budgets) {
+  const [tree, monthTxns] = await Promise.all([
+    getCategoryTree(),
+    getTransactions({ since: startOfMonthIso(), limit: 500 }),
+  ]);
+  const rows = await computeBudgetSpend(budgets, tree, monthTxns);
+
+  const box = document.createElement('div');
+  box.id = 'budgets-section';
+  box.className = 'card mb-3';
+  const head = document.createElement('div');
+  head.className = 'card-header';
+  head.textContent = t('budgets.sectionTitle');
+  const body = document.createElement('div');
+  body.className = 'card-body py-3';
+
+  for (const r of rows) {
+    const pct = r.amount > 0 ? Math.min(100, (r.spent / r.amount) * 100) : 0;
+    const over = r.spent > r.amount;
+    const row = document.createElement('div');
+    row.className = 'mb-3';
+    row.style.maxWidth = '520px';
+    const top = document.createElement('div');
+    top.className = 'd-flex justify-content-between small mb-1';
+    const name = document.createElement('span');
+    name.textContent = r.label;
+    const meta = document.createElement('span');
+    meta.className = over ? 'text-danger fw-semibold' : 'text-muted';
+    meta.textContent = `${formatMoney(r.spent, 'MYR')} / ${formatMoney(r.amount, 'MYR')}`;
+    top.append(name, meta);
+    const bar = document.createElement('div');
+    bar.className = 'progress';
+    bar.style.height = '8px';
+    const fill = document.createElement('div');
+    fill.className = `progress-bar${over ? ' bg-danger' : ''}`;
+    fill.style.width = `${pct}%`;
+    fill.setAttribute('role', 'progressbar');
+    bar.appendChild(fill);
+    row.append(top, bar);
+    body.appendChild(row);
+  }
+  box.append(head, body);
+  return box;
+}
+
+// Compute current-month spend per budget. Debits only, transfers excluded,
+// every amount converted to MYR at its own date (ADR 0003). `ids = null`
+// means the overall budget (all debits); otherwise the category + descendants.
+async function computeBudgetSpend(budgets, tree, txns) {
+  const childrenOf = new Map();
+  for (const c of tree) {
+    if (!c.parent_id) continue;
+    if (!childrenOf.has(c.parent_id)) childrenOf.set(c.parent_id, []);
+    childrenOf.get(c.parent_id).push(c.id);
+  }
+  const descendantSet = (rootId) => {
+    const set = new Set([rootId]);
+    const stack = [rootId];
+    while (stack.length) {
+      const id = stack.pop();
+      for (const ch of childrenOf.get(id) ?? []) {
+        if (!set.has(ch)) {
+          set.add(ch);
+          stack.push(ch);
+        }
+      }
+    }
+    return set;
+  };
+
+  const debits = txns.filter((tx) => tx.direction === 'debit' && !tx.transfer_group_id);
+  const converted = await Promise.allSettled(
+    debits.map((tx) =>
+      tx.currency === 'MYR'
+        ? Promise.resolve(Number(tx.amount))
+        : convert(Number(tx.amount), tx.currency, 'MYR', tx.transaction_date),
+    ),
+  );
+  const names = new Map(tree.map((c) => [c.id, c.name]));
+
+  return budgets.map((b) => {
+    const ids = b.category_id ? descendantSet(b.category_id) : null;
+    let spent = 0;
+    for (let j = 0; j < debits.length; j++) {
+      const tx = debits[j];
+      if (ids && !(tx.category_id && ids.has(tx.category_id))) continue;
+      const myr = converted[j].status === 'fulfilled' ? converted[j].value : null;
+      if (myr === null) continue;
+      spent += myr;
+    }
+    return {
+      label: b.category_id ? (names.get(b.category_id) ?? t('col.unknown')) : t('budgets.overall'),
+      amount: Number(b.amount),
+      spent: Math.round(spent * 100) / 100,
+    };
+  });
+}
+
+// First moment of the current calendar month as an ISO timestamp — the precise
+// window for budget spend (a 30-day tail would miss the month's first day).
+function startOfMonthIso() {
+  const now = new Date();
+  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return first.toISOString();
 }
 
 function downloadCsv(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs) {

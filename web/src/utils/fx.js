@@ -9,6 +9,10 @@ const API_BASE = 'https://api.frankfurter.dev/v2';
 // still correct for a past transaction's date.
 const STORAGE_KEY = 'fx_rate_cache_v1';
 
+// Series cache (Phase 4 Reports): full date-range rate tables keyed by
+// base_quote_start_end. Same sessionStorage discipline as STORAGE_KEY.
+const SERIES_STORAGE_KEY = 'fx_series_cache_v1';
+
 // In-memory cache seeded from sessionStorage; the "latest" (undated) entries
 // are excluded on load so a live rate never goes stale for the whole session.
 let rateCache = new Map();
@@ -116,9 +120,95 @@ function dateKey(date) {
 export function _resetCacheForTests() {
   rateCache = new Map();
   pending.clear();
+  seriesCache = new Map();
   try {
     sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(SERIES_STORAGE_KEY);
   } catch {
     // ignore
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 (Reports): time-series rates. One request per (base, quote, range)
+// instead of N per-date convert() calls — a balance curve needs a rate for
+// every day in the window. Kept behind fx.js so adr-0001's "single FX
+// touchpoint" rule still holds: callers never talk to Frankfurter directly.
+// ---------------------------------------------------------------------------
+
+const SERIES_KEY_RE = /^[A-Z]{3}_[A-Z]{3}_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}$/;
+
+let seriesCache = new Map();
+const pendingSeries = new Map();
+
+try {
+  const raw = sessionStorage.getItem(SERIES_STORAGE_KEY);
+  if (raw) {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [key, value] of Object.entries(parsed)) {
+        if (SERIES_KEY_RE.test(key) && Array.isArray(value)) {
+          seriesCache.set(key, value);
+        }
+      }
+    }
+  }
+} catch {
+  // sessionStorage unavailable or corrupt — start empty, everything still works.
+}
+
+/**
+ * Daily rates for a date range, e.g. `[{date:'2024-01-01', rate:3.5}, …]`
+ * ascending. One HTTP request per (base, quote, range); frozen in sessionStorage
+ * (ADR 0003 — historical series never go stale). Returns `[]` — never throws —
+ * if the range can't be resolved, so callers can degrade gracefully.
+ */
+export async function timeSeries(base, quote, startDate, endDate) {
+  if (base === quote) return [];
+  const start = dateKey(startDate);
+  const end = dateKey(endDate);
+  if (!start || !end || start > end) return [];
+  const key = `${base}_${quote}_${start}_${end}`;
+
+  if (seriesCache.has(key)) return seriesCache.get(key);
+  if (pendingSeries.has(key)) return pendingSeries.get(key);
+
+  const promise = (async () => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/${start}..${end}?base=${base}&symbols=${quote}`,
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      const rates = data?.rates ?? null;
+      if (!rates || typeof rates !== 'object') return [];
+      const rows = Object.entries(rates)
+        .filter(([, v]) => v && typeof v === 'object')
+        .map(([date, v]) => ({ date, rate: Number(v[quote]) }))
+        .filter((r) => Number.isFinite(r.rate))
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+      seriesCache.set(key, rows);
+      persistSeriesCache();
+      return rows;
+    } catch {
+      return [];
+    } finally {
+      pendingSeries.delete(key);
+    }
+  })();
+
+  pendingSeries.set(key, promise);
+  return promise;
+}
+
+function persistSeriesCache() {
+  const out = {};
+  for (const [key, value] of seriesCache) {
+    if (SERIES_KEY_RE.test(key)) out[key] = value;
+  }
+  try {
+    sessionStorage.setItem(SERIES_STORAGE_KEY, JSON.stringify(out));
+  } catch {
+    // Quota exceeded / unavailable — non-fatal.
   }
 }

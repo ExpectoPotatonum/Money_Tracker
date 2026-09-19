@@ -790,7 +790,11 @@ in the trigger (see above). Re-running is safe: maps are stable, new captures ju
 
 ---
 
-# Part 5 — Phase 4 (Balance trends + budgets + charts) — BUILD PLAN (2026-09-19, awaiting go)
+# Part 5 — Phase 4 (Balance trends + budgets + charts) — BUILD PLAN (2026-09-19) — **BUILT: status at bottom of section**
+
+> **OWNER CONFIRMATION 2026-09-19 — all 8 decision points (§4.9.4) accepted as recommended
+> ("nvm you proceed"). Build starts 2026-09-19; build status recorded at the bottom of this
+> section once lint/build/e2e pass (owner runs `npm run test:e2e` when flagged).**
 
 Owner decisions carried in from §4.3/§4.7.5: balance lines computed client-side (opening_balance +
 Σ credits − Σ debits), budgets = monthly + per-category + total with **inline progress bars only**
@@ -900,6 +904,52 @@ No trigger/cron — spend-vs-budget is a client-side read over `transactions` (f
 3. Reports view + nav + Chart.js (3 charts + curves).
 4. Budgets manager + dashboard progress bars.
 5. i18n + e2e specs → flag owner: "please run `npm run test:e2e`".
+
+---
+
+> **BUILD STATUS — 2026-09-19, gate passed, awaiting owner e2e.**
+>
+> **Lint ✅ · Vite build ✅** (Chart.js lands as its own code-split chunk `assets/auto-*.js`,
+> ~71.5 kB gzip — fetched only when `#/reports` opens; dashboard chunk unchanged in size).
+>
+> Shipped in this phase (all committed/pushed):
+> - `supabase/migrations/202609190005_budgets.sql` — `budgets` table + partial unique indexes
+>   (one overall via `category_id is null`, one per category), GRANT + RLS `owner_only` per §17.
+> - `web/src/api/budgets.js` — `listBudgets` (category embed), `saveBudget`, `deleteBudget`; 23505
+>   (duplicate-overall / duplicate-category) surfaces as a friendly error.
+> - `web/src/api/transactions.js` — shared `TXN_SELECT`; `getAllTransactions()` pages `/rest/v1`
+>   1000-row cap via `range()`; `getTransactions` gains `since` (precise month-start filter for
+>   budget spend); `getCategoryTree()` (two-tier rows for roll-ups). Dashboard 30-day default
+>   unchanged.
+> - `web/src/utils/fx.js` — `timeSeries(base, quote, start, end)` + `fx_series_cache_v1`
+>   sessionStorage cache; still the single FX touchpoint (ADR 0001/0003).
+> - `web/src/views/reports.js` — `#/reports` view: 12-month income/expense bars (transfers
+>   excluded), category-share pie with month selector (children roll up to top-level), per-account
+>   lines + account checkboxes, net-worth line (visible accounts only, decision 4) + `#net-worth-now`
+>   summary; anchors at `opening_balance_date` (decision 5); Chart.js destroy-on-re-render +
+>   `data-bs-theme` MutationObserver for dark mode.
+> - `web/src/components/budgetManager.js` — manager + add/edit form (overall / per-category radios,
+>   category select, amount), delete; refreshed on save.
+> - `web/src/views/dashboard.js` — "Budgets" button beside Tags/Accounts + inline progress-bar
+>   section (§4.7.5): current-calendar-month spend, debits only, transfers excluded, parent budgets
+>   count child spend (decision 3), over-budget bars turn danger. Rendered only when budgets exist.
+> - `web/src/main.js` — `#/reports` route + "Reports" nav link (active state).
+> - `web/src/lib/i18n.js` — en/zh for all reports/budgets strings.
+> - `web/package.json` — `chart.js@4.5.1` (MIT) added.
+> - Specs (owner runs): `web/tests/reports.spec.js` (4 canvases, month selector, net-worth now,
+>   toggle count, active nav) + `web/tests/budgets.spec.js` (bar widths 75%/100%, over-budget danger
+>   state, manager add → POST payload).
+>
+> Bugs caught during build (fixed before gate): `myrValues` pie indexing drifted when transfers were
+> present (fixed: bars+pie index the same non-transfer list); budget add-form got an empty category
+> list (hoisted out of `reload()`); Chart.js instances were never tracked → re-render leak (now
+> pushed/destroyed); budget form radios weren't a true group (shared `name`).
+>
+> **Owner TODOs (2):**
+> 1. Apply `202609190005_budgets.sql` to Supabase (SQL Editor, or `supabase db push`).
+> 2. In `web/`, run **`npm run test:e2e`** — the assistant listens. If it dies on
+>    "http://localhost:4173 is already used", `netstat -ano | findstr 4173` →
+>    `taskkill /PID <pid> /F` (config is `reuseExistingServer:false`).
 
 
 

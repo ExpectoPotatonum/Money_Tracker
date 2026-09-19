@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
-    "bootstrap": "^5.3.3"
+    "bootstrap": "^5.3.3",
+    "chart.js": "^4.5.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",

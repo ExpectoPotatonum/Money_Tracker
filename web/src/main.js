@@ -3,6 +3,7 @@ import './style.css';
 import { getSession, onAuthStateChange, signOut, updatePassword } from './api/auth.js';
 import { renderAuthGate } from './views/authGate.js';
 import { renderDashboard } from './views/dashboard.js';
+import { renderReports } from './views/reports.js';
 import { renderReviewInbox } from './views/reviewInbox.js';
 import { installLogger, logApiError } from './lib/logger.js';
 import { openSettings } from './components/settingsDialog.js';
@@ -19,7 +20,10 @@ applyTheme();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
 function currentView() {
-  return window.location.hash === '#/review' ? 'review' : 'dashboard';
+  const h = window.location.hash;
+  if (h === '#/review') return 'review';
+  if (h === '#/reports') return 'reports';
+  return 'dashboard';
 }
 
 function renderNav() {
@@ -43,6 +47,11 @@ function renderNav() {
   reviewLink.href = '#/review';
   reviewLink.className = `nav-link ${currentView() === 'review' ? 'active' : ''}`;
   reviewLink.textContent = t('nav.review');
+
+  const reportsLink = document.createElement('a');
+  reportsLink.href = '#/reports';
+  reportsLink.className = `nav-link ${currentView() === 'reports' ? 'active' : ''}`;
+  reportsLink.textContent = t('nav.reports');
 
   const settingsBtn = document.createElement('button');
   settingsBtn.type = 'button';
@@ -74,7 +83,7 @@ function renderNav() {
   signOutBtn.textContent = t('nav.signOut');
   signOutBtn.addEventListener('click', () => signOut().catch(() => {}));
 
-  links.append(dashboardLink, reviewLink, themeBtn, settingsBtn, signOutBtn);
+  links.append(dashboardLink, reviewLink, reportsLink, themeBtn, settingsBtn, signOutBtn);
   nav.appendChild(links);
   return nav;
 }
@@ -91,8 +100,11 @@ async function render() {
   app.replaceChildren(renderNav(), viewRoot);
 
   try {
-    if (currentView() === 'review') {
+    const view = currentView();
+    if (view === 'review') {
       await renderReviewInbox(viewRoot);
+    } else if (view === 'reports') {
+      await renderReports(viewRoot);
     } else {
       await renderDashboard(viewRoot);
     }
