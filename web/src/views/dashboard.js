@@ -130,6 +130,7 @@ export async function renderDashboard(root) {
   const all = [...debits, ...credits, ...transfers];
   const myrTotals = new Map();
   let totalMyr = 0;
+  let totalCredit = 0;
   let skipped = 0;
 
   const results = await Promise.allSettled(
@@ -144,12 +145,14 @@ export async function renderDashboard(root) {
     const r = results[i];
     const myr = r.status === 'fulfilled' ? r.value : null;
     const isSpend = t.direction === 'debit' && !t.transfer_group_id;
+    const isIncome = t.direction === 'credit' && !t.transfer_group_id;
     if (myr === null) {
       if (isSpend) skipped += 1;
       myrTotals.set(t.id, null);
     } else {
       myrTotals.set(t.id, myr);
       if (isSpend) totalMyr += myr;
+      else if (isIncome) totalCredit += myr;
     }
   }
 
@@ -195,18 +198,17 @@ export async function renderDashboard(root) {
     budgetsManageBtn(),
     csvExportBtn(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs),
   );
-  const total = document.createElement('div');
-  total.className = 'text-end';
-  const totalLabel = document.createElement('div');
-  totalLabel.className = 'text-muted small';
-  totalLabel.textContent = t('dash.spentLabel');
-  const totalValue = document.createElement('div');
-  totalValue.id = 'total-myr';
-  totalValue.className = 'fs-3 fw-bold';
-  totalValue.textContent = formatMoney(totalMyr, 'MYR');
-  total.append(totalLabel, totalValue);
-  header.append(left, total);
+  header.append(left);
   root.appendChild(header);
+
+  // Part 6 — "one-screen overview": summary tiles + an accounts overview row.
+  // `#total-myr` moves from the header into the expense tile — same id, same
+  // value — so the e2e assertions are untouched.
+  root.appendChild(summaryStrip(totalCredit, totalMyr));
+  const visibleAccounts = accounts.filter((a) => !a.is_hidden);
+  if (visibleAccounts.length > 0) {
+    root.appendChild(accountsOverview(visibleAccounts, transactions));
+  }
 
   if (skipped > 0) {
     root.appendChild(
@@ -579,4 +581,84 @@ function downloadCsv(debits, credits, transfers, myrTotals, categoryNames, accou
 function escapeCsv(value) {
   const s = String(value ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Part 6 — summary tile strip: window income / expense (`#total-myr`) / net.
+function summaryStrip(income, expense) {
+  const strip = document.createElement('div');
+  strip.className = 'row g-2 mb-3';
+  strip.id = 'summary-strip';
+
+  const tile = (label, value, extra) => {
+    const col = document.createElement('div');
+    col.className = 'col-6 col-md-4';
+    const card = document.createElement('div');
+    card.className = 'summary-tile';
+    const lbl = document.createElement('div');
+    lbl.className = 'tile-label';
+    lbl.textContent = label;
+    const val = document.createElement('div');
+    val.className = `tile-value${extra ? ` ${extra}` : ''}`;
+    val.textContent = value;
+    card.append(lbl, val);
+    col.appendChild(card);
+    return col;
+  };
+
+  strip.appendChild(tile(t('dash.income'), formatMoney(income, 'MYR')));
+  const expenseTile = tile(t('dash.spentLabel'), formatMoney(expense, 'MYR'));
+  expenseTile.querySelector('.tile-value').id = 'total-myr';
+  strip.appendChild(expenseTile);
+  const net = income - expense;
+  strip.appendChild(tile(t('dash.net'), formatMoney(net, 'MYR'), net >= 0 ? 'pos' : 'neg'));
+  return strip;
+}
+
+// Part 6 — accounts overview row: per-account estimated balance (opening +
+// loaded-window flow, same math as the account manager) + a currency chip.
+function accountsOverview(accounts, transactions) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-3';
+  wrap.id = 'accounts-overview';
+
+  const label = document.createElement('div');
+  label.className = 'overview-label';
+  label.textContent = t('dash.accounts');
+  wrap.appendChild(label);
+
+  const row = document.createElement('div');
+  row.className = 'd-flex flex-wrap gap-2';
+  for (const acc of accounts) {
+    const chip = document.createElement('span');
+    chip.className = 'account-chip';
+
+    const name = document.createElement('span');
+    name.className = 'chip-name';
+    name.textContent = acc.name;
+
+    const balance = document.createElement('span');
+    balance.className = 'chip-balance';
+    balance.textContent = formatMoney(estBalance(acc, transactions), acc.currency || 'MYR');
+
+    const cur = document.createElement('span');
+    cur.className = 'chip-cur';
+    cur.textContent = acc.currency || 'MYR';
+
+    chip.append(name, balance, cur);
+    row.appendChild(chip);
+  }
+  wrap.appendChild(row);
+  return wrap;
+}
+
+// Same estimate the account manager shows: opening balance + net flow across
+// the loaded window (transfers included — a transfer half moves its own
+// account's balance, which is exactly what we want here).
+function estBalance(account, txns) {
+  let sum = Number(account.opening_balance ?? 0);
+  for (const tx of txns) {
+    if (tx.account_id !== account.id) continue;
+    sum += tx.direction === 'credit' ? Number(tx.amount) : -Number(tx.amount);
+  }
+  return sum;
 }

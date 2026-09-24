@@ -13,9 +13,11 @@ import { convert, timeSeries } from '../utils/fx.js';
 import { formatMoney, setCurrencySymbols } from '../utils/format.js';
 import { t } from '../lib/i18n.js';
 
+// Part 6 — emerald-forward palette aligned to the bee-green tokens. Chart.js
+// paints to a canvas, so colors must be literals, not CSS variables.
 const PALETTE = [
-  '#0d6efd', '#198754', '#dc3545', '#ffc107', '#6f42c1',
-  '#fd7e14', '#0dcaf0', '#d63384', '#20c997', '#adb5bd',
+  '#10b981', '#0ea5e9', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#14b8a6', '#f97316', '#d946ef', '#84cc16', '#94a3b8',
 ];
 
 // All charts created this session, so a re-render can destroy the old ones
@@ -210,7 +212,7 @@ export async function renderReports(root) {
           {
             label: t('reports.income'),
             data: months.map((m) => Math.round(income.get(m) * 100) / 100),
-            backgroundColor: 'rgba(25,135,84,0.75)',
+            backgroundColor: 'rgba(16,185,129,0.8)',
           },
           {
             label: t('reports.expense'),
@@ -410,8 +412,8 @@ export async function renderReports(root) {
           {
             label: t('reports.netWorth'),
             data: netWorthPoints.map((p) => p.value),
-            borderColor: '#0d6efd',
-            backgroundColor: 'rgba(13,110,253,0.08)',
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16,185,129,0.1)',
             fill: true,
             borderWidth: 2,
             pointRadius: 0,

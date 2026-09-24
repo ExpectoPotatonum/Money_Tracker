@@ -1002,5 +1002,27 @@ already our own Android launcher color `ic_launcher_background`). We borrow the 
 1. Tokens + global restyle (both themes) → 2. dashboard overview restructure → 3. reports palette →
 4. i18n + lint/build → 5. owner runs `npm run test:e2e` (expect 32/32; assistant listens).
 
+> **BUILD STATUS — 2026-09-24, gate passed.**
+> All items done in order; `npm run lint` + `vite build` clean; owner ran `npm run test:e2e` →
+> **32 passed (58.1s)**. Shipped as one commit on top of `221bc7f`.
+>
+> What shipped (all decided points went with the recommended option):
+> - **Style**: full design-token layer in `web/src/style.css` over the existing OLED base —
+>   bee-green accent (`#10b981`, brightened to `#34d399` on OLED) wired through Bootstrap's
+>   `--bs-primary` **and** `.btn-primary`/`.btn-outline-primary`'s own vars (Bootstrap compiles
+>   hover/active shades, so just overriding the primary token would leave blue hover states);
+>   radius scale (18px cards, 11px controls, pill navbar/badges/progress), border/shadow system
+>   (borders in dark, soft layered shadows in light), accent focus rings, uppercase tiny table
+>   headers, accent row hover with rounded row corners. Light mode gets the same tokens.
+> - **Navigation**: top navbar kept, restyled dark with a pill **accent-tinted active state**
+>   (`main.js` classes untouched — the palette is re-pinned in CSS per theme).
+> - **Dashboard "one-screen overview"**: `summaryStrip()` — Income / Spent / Net tiles — and
+>   `accountsOverview()` — per-account est. balance chips + currency pills (same `estBalance`
+>   math as the account manager). `#total-myr` moved from the header into the expense tile:
+>   same id, same value, so all 32 specs pass unchanged. No new ids were required for tests.
+> - **Reports**: `PALETTE` now emerald-forward; net-worth line + budget-remaining bars re-tinted
+>   to the accent (literals, not CSS vars — Chart.js paints to canvas).
+> - **i18n**: `dash.income`, `dash.net`, `dash.accounts` (en + zh).
+
 
 
