@@ -44,6 +44,16 @@ class SyncScheduler @Inject constructor(
             ExistingWorkPolicy.REPLACE,
             heartbeatRequest,
         )
+
+        // Phase 6: catch up any dues recurring cycles whenever the app wakes.
+        val recurringRequest = OneTimeWorkRequestBuilder<RecurringCheckWorker>()
+            .setConstraints(networkConnected())
+            .build()
+        workManager.enqueueUniqueWork(
+            RecurringCheckWorker.WORK_NAME_ONE_OFF,
+            ExistingWorkPolicy.KEEP,
+            recurringRequest,
+        )
     }
 
     fun scheduleAll() {
@@ -71,6 +81,17 @@ class SyncScheduler @Inject constructor(
             ListenerHealthWorker.WORK_NAME,
             ExistingPeriodicWorkPolicy.UPDATE,
             health,
+        )
+
+        // Phase 6: the safety net for days with no captures — due recurring
+        // cycles get materialized at least once a day.
+        val recurring = PeriodicWorkRequestBuilder<RecurringCheckWorker>(24, TimeUnit.HOURS)
+            .setConstraints(networkConnected())
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            RecurringCheckWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            recurring,
         )
     }
 

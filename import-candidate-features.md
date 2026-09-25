@@ -400,9 +400,12 @@ Legend (per item): ✅ **done** in tree · 🔨 **build** (cheap/additive) · �
 4. **Phase 4 — Balance trends + budgets + charts** — reads accounts; net-worth + per-account lines,
    budgets table, Chart.js views. **BUILD PLAN in §4.9 (2026-09-19, awaiting go).**
 5. **Phase 5 — Android voice (SpeechRecognizer)** — completes the deferred half of voice; on-device
-   Gemini key (owner decision), quick-add voice UI.
+   Gemini key (owner decision), quick-add voice UI. **BUILT + GATED 2026-09-25** — quick-add tab
+   (🎤 SpeechRecognizer + typed NL → LLM → preview → Supabase manual insert), Settings LLM fields,
+   SupabaseApi manual POST + categories/accounts GET. This is the Android half of Phase F (web voice
+   shipped with Part 6).
 6. **Phase 6 — Recurring auto-entry (Android WorkManager)** — owner decision (Q4): phone-driven
-   materialization of due recurring rows. New Android worker + a manual-insert path.
+   materialization of due recurring rows. **BUILT + GATED 2026-09-25** — see §4.10 build record.
 7. **Deferred / hold**: widgets (defer), Insights Explorer, MCP (on request).
 
 ## 4.4 Resolved + documentation (Q1–Q6 now all decided)
@@ -1068,6 +1071,46 @@ already our own Android launcher color `ic_launcher_background`). We borrow the 
 >   650-weight title, and an accent-tinted circular close-button hover. Zero markup changes in
 >   `common.js`; specs assert `dialog` + `#nl-*` ids only.
 > - **Gates**: `npm run lint` + `vite build` clean after both polish edits.
+
+## 4.10 — Phase 6 (Recurring auto-entry) — BUILD RECORD (2026-09-25)
+
+Built per Q4's decision (§4.5): **the phone owns the clock.** WorkManager is the only free, always-on
+scheduler in the stack (Free Supabase: no `pg_cron`, no scheduled Edge Functions) — so due cycles are
+materialized by an Android worker, not the DB, and only while the app is healthy (§10 battery defense
+is what keeps that true).
+
+**Schema — `supabase/migrations/202609250001_recurring_entries.sql`** (GRANT + RLS in the same file, §17):
+- `recurring_entries` — name, amount, currency, direction, `category_id`, `account_id` (required),
+  `frequency` (`daily|weekly|monthly|yearly`), `interval_step`, `day_of_month` (monthly anchor,
+  clamped), merchant_raw, notes, `next_due_date`, `active`, timestamps.
+- `transactions` gains `recurring_entry_id` (FK `on delete set null` — deleting an entry **unlinks**
+  its past rows, never deletes history) + `recurring_due_date`, guarded by the partial unique index
+  `transactions_recurring_uq (recurring_entry_id, recurring_due_date) where recurring_entry_id is not
+  null` — the exactly-once arbiter the worker's upsert conflicts on.
+
+**Android — the materializer + worker:**
+- `RecurringMaterializer` — pure, unit-tested logic: `advance()` moves one interval from the **due
+  date itself** (never from "now", so lagged catch-up backfills the missed cycle only); monthly honors
+  `day_of_month` clamped to month length (Jan 31 → Feb 28); a cycle is dated **00:00 MYT** on its due
+  date (`2026-09-01` → `2026-08-31T16:00:00Z` — same KL pinning as the dashboard); `buildRow()`
+  emits a `source_package='manual'` / `confidence='low'` row (chk_manual_source-compliant) with
+  `is_recurring=true` + the dedup pair, `source_app_label` from the entry's account name (Cash
+  fallback), merchant from `merchant_raw` or the entry name.
+- `RecurringCheckWorker` (HiltWorker) — signs in unattended (AuthStore, stale-token clear-and-retry
+  on 401/403 like the sync workers), reads active cycles with `next_due_date <= today(MYT)`, upserts
+  each with `Prefer: resolution=ignore-duplicates` on the dedup pair, **then** PATCHes
+  `next_due_date` forward. A retried pass can't double-record a cycle; a partial failure catches up on
+  the next pass. **No backfill**: one cycle per pass — a monthly entry missed while the phone was off
+  records the missed month once and resumes at the next due date.
+- Scheduling (`SyncScheduler`): a 24h periodic (`recurring-check`) as the days-without-captures safety
+  net **plus** a one-off (`recurring-check-one-off`) on every app wake/capture for fast catch-up.
+
+**Web — the "manual-insert path":** `api/recurring.js` — `listRecurringEntries` / `saveRecurringEntry`
+/ `deleteRecurringEntry`, all under the owner_only RLS policy. A management **UI** is the natural
+follow-up; entries can be created in the Supabase SQL Editor meanwhile.
+
+**Tests** — `RecurringMaterializerTest` (12 cases: advance math incl. clamp + leap day, MYT instants,
+row shape, JSON parse incl. null day_of_month). Gate: `./gradlew testReleaseUnitTest` green.
 
 
 

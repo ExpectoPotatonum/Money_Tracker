@@ -39,23 +39,10 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun saveCredentials(email: String, password: String) {
-        authStore.email = email
-        authStore.password = password
-        authStore.accessToken = null
-        authStore.userId = null
-        _state.value = _state.value.copy(credentialsSaved = true)
-    }
-
-    fun credentialsDismissed() {
-        _state.value = _state.value.copy(credentialsSaved = false)
-    }
-
     data class UiState(
         val lastCapturedAt: Long? = null,
         val unsyncedCount: Int = 0,
         val lastHeartbeatAt: Long = 0,
         val syncQueryMillis: Long = 0,
-        val credentialsSaved: Boolean = false,
     )
 }
