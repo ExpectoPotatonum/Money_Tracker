@@ -1024,5 +1024,50 @@ already our own Android launcher color `ic_launcher_background`). We borrow the 
 >   to the accent (literals, not CSS vars — Chart.js paints to canvas).
 > - **i18n**: `dash.income`, `dash.net`, `dash.accounts` (en + zh).
 
+> **FOLLOW-UP (same day) — owner override: "exact like it", not pattern-level.**
+> Owner reviewed 6.3.2's "(rec) keep top navbar" and rejected it: *"why is the UI just apply the
+> pattern, but not the exact one"* — the app shell should look like BeeCount's web, not just carry its
+> tokens. Decision (2026-09-24): **full left-sidebar app shell + a true one-screen home**, re-implemented
+> in our own Bootstrap/Chart.js (BSL license respected — zero BeeCount source/assets copied; "exact" =
+> indistinguishable at a glance). License line recorded on decision: BeeCount is BSL; the look is
+> re-implemented, not copied.
+>
+> What changed (commit on top of the Part 6 commit):
+> - **Shell (`main.js`, `index.html`)**: top navbar replaced by a `<nav class="app-sidebar">` — bee-green
+>   `#0b3d2e` in light, pure `#000` on OLED — with brand block, pill `.nav-link` items, and a footer
+>   holding theme/settings/sign-out. `#nav-theme-btn` and `#nav-settings-btn` keep their ids, just move
+>   into the footer (both are clicked by e2e). `#app` drops `container py-4`; views render into
+>   `.app-view` inside the shell. Collapses to a top bar below 992px.
+> - **Spec anchors preserved deliberately**: the sidebar is the `<nav>` element, so reports.spec's
+>   `nav .nav-link.active` → 'Reports' still matches; auth gate renders full-screen before the shell
+>   exists (`#auth-gate` untouched).
+> - **One-screen home (`dashboard.js`) — `homeOverview()`**: three panels under the existing summary
+>   tiles, all computed from data the dashboard **already loaded** (zero new fetches, so the e2e route
+>   mocks are untouched): asset-composition **doughnut** (est. balances → MYR; empty-state text when no
+>   account has a positive balance), **category-share strip** (top-5 spend, CSS progress bars — no
+>   canvas, theme-safe), and a **30-day spend trend line**. Chart.js via the shared dynamic import
+>   (same chunk as Reports); charts are tracked in `homeCharts` and rebuilt in-place on theme flip by a
+>   MutationObserver (never a full dashboard re-render, so edit-mode dirty rows survive).
+> - **i18n**: `dash.assetComposition`, `dash.categoryShare`, `dash.trend`, `dash.noAssetData`,
+>   `dash.noTrendData` (en + zh).
+> - **Gates**: `npm run lint` clean, `vite build` clean. Prettier failures were pre-existing in the
+>   same files before these edits (not a repo gate — eslint is).
+> - **e2e**: nav DOM restructured — owner re-ran `npm run test:e2e` → **32 passed (8.1m)**. All
+>   ids/labels/values the 32 specs assert were preserved (verified file-by-file before building).
+>
+> **FOLLOW-UP (2026-09-25, same uncommitted tree) — polish, per owner.**
+> - **Brand logo removed** (`main.js`, `style.css`): the 🐝 emoji left the sidebar brand — the brand is
+>   now just the app title; `.sidebar-brand-emoji` and its mobile hide rule deleted.
+> - **Dialogs match the shell** (`style.css`, CSS-only): every modal — Add from text, Transfer,
+>   Settings, Accounts, Budgets, Tags, review-inbox escalate — funnels through `openModal()`
+>   (`common.js`, native `<dialog>` + Bootstrap classes, no Bootstrap JS) and had only received the
+>   radius/surface token pass, so it still showed stock Bootstrap chrome. One block restyles all of
+>   them to the BeeCount language: `dialog.modal` strips native dialog border/padding; themed
+>   `::backdrop` (green-tinted `rgba(11,61,46,.42)` light / `rgba(0,0,0,.66)` OLED); `.modal-content`
+>   uses `--mt-surface`/`--mt-border`/hover shadow (border-only on OLED); header/footer borders,
+>   650-weight title, and an accent-tinted circular close-button hover. Zero markup changes in
+>   `common.js`; specs assert `dialog` + `#nl-*` ids only.
+> - **Gates**: `npm run lint` + `vite build` clean after both polish edits.
+
 
 

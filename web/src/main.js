@@ -26,46 +26,51 @@ function currentView() {
   return 'dashboard';
 }
 
-function renderNav() {
+function renderSidebar() {
   const nav = document.createElement('nav');
-  nav.className = 'navbar navbar-expand navbar-light bg-light rounded mb-4 px-3';
+  nav.className = 'app-sidebar';
 
-  const brand = document.createElement('span');
-  brand.className = 'navbar-brand mb-0 h1';
-  brand.textContent = t('app.title');
+  // Brand block — BeeCount-style: app title, no logo.
+  const brand = document.createElement('a');
+  brand.className = 'sidebar-brand';
+  brand.href = '#/';
+  const brandTitle = document.createElement('span');
+  brandTitle.className = 'sidebar-brand-title';
+  brandTitle.textContent = t('app.title');
+  brand.appendChild(brandTitle);
   nav.appendChild(brand);
 
+  // Primary links. Keep the .nav-link class so the e2e `nav .nav-link.active`
+  // assertion (reports.spec) keeps matching — the sidebar IS the nav element.
   const links = document.createElement('div');
-  links.className = 'd-flex align-items-center gap-2 ms-auto';
+  links.className = 'sidebar-links';
 
-  const dashboardLink = document.createElement('a');
-  dashboardLink.href = '#/';
-  dashboardLink.className = `nav-link ${currentView() === 'dashboard' ? 'active' : ''}`;
-  dashboardLink.textContent = t('nav.dashboard');
+  const mkLink = (href, label, view) => {
+    const a = document.createElement('a');
+    a.href = href;
+    a.className = `nav-link ${currentView() === view ? 'active' : ''}`;
+    a.textContent = label;
+    return a;
+  };
 
-  const reviewLink = document.createElement('a');
-  reviewLink.href = '#/review';
-  reviewLink.className = `nav-link ${currentView() === 'review' ? 'active' : ''}`;
-  reviewLink.textContent = t('nav.review');
+  links.append(
+    mkLink('#/', t('nav.dashboard'), 'dashboard'),
+    mkLink('#/review', t('nav.review'), 'review'),
+    mkLink('#/reports', t('nav.reports'), 'reports'),
+  );
+  nav.appendChild(links);
 
-  const reportsLink = document.createElement('a');
-  reportsLink.href = '#/reports';
-  reportsLink.className = `nav-link ${currentView() === 'reports' ? 'active' : ''}`;
-  reportsLink.textContent = t('nav.reports');
-
-  const settingsBtn = document.createElement('button');
-  settingsBtn.type = 'button';
-  settingsBtn.id = 'nav-settings-btn';
-  settingsBtn.className = 'btn btn-outline-secondary btn-sm';
-  settingsBtn.textContent = t('nav.settings');
-  settingsBtn.addEventListener('click', () => openSettings());
+  // Footer: theme, settings, sign out. Ids move with them so the e2e clicks
+  // (#nav-theme-btn, #nav-settings-btn) keep working from the new location.
+  const footer = document.createElement('div');
+  footer.className = 'sidebar-footer';
 
   // Theme toggle: shows the RESOLVED icon (what's actually active, not the
   // stored preference) and cycles system -> dark -> light on click.
   const themeBtn = document.createElement('button');
   themeBtn.type = 'button';
   themeBtn.id = 'nav-theme-btn';
-  themeBtn.className = 'btn btn-outline-secondary btn-sm';
+  themeBtn.className = 'sidebar-btn';
   themeBtn.title = t('nav.theme.cycle');
   themeBtn.setAttribute('aria-label', t('nav.theme'));
   const syncThemeIcon = () => {
@@ -77,14 +82,21 @@ function renderNav() {
   });
   syncThemeIcon();
 
+  const settingsBtn = document.createElement('button');
+  settingsBtn.type = 'button';
+  settingsBtn.id = 'nav-settings-btn';
+  settingsBtn.className = 'sidebar-btn';
+  settingsBtn.textContent = `${t('nav.settings')} ⚙`;
+  settingsBtn.addEventListener('click', () => openSettings());
+
   const signOutBtn = document.createElement('button');
   signOutBtn.type = 'button';
-  signOutBtn.className = 'btn btn-outline-secondary btn-sm';
+  signOutBtn.className = 'sidebar-btn';
   signOutBtn.textContent = t('nav.signOut');
   signOutBtn.addEventListener('click', () => signOut().catch(() => {}));
 
-  links.append(dashboardLink, reviewLink, reportsLink, themeBtn, settingsBtn, signOutBtn);
-  nav.appendChild(links);
+  footer.append(themeBtn, settingsBtn, signOutBtn);
+  nav.appendChild(footer);
   return nav;
 }
 
@@ -96,8 +108,11 @@ async function render() {
   }
 
   const viewRoot = document.createElement('div');
-  viewRoot.className = 'mt-3';
-  app.replaceChildren(renderNav(), viewRoot);
+  viewRoot.className = 'app-view';
+  const shell = document.createElement('div');
+  shell.className = 'app-shell';
+  shell.append(renderSidebar(), viewRoot);
+  app.replaceChildren(shell);
 
   try {
     const view = currentView();

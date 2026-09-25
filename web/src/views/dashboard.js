@@ -210,6 +210,17 @@ export async function renderDashboard(root) {
     root.appendChild(accountsOverview(visibleAccounts, transactions));
   }
 
+  // Part 6 (exact) — BeeCount one-screen home widgets. All three panels
+  // (asset composition, category share, spending trend) compute EXCLUSIVELY
+  // from data already loaded above — no new fetches — so the e2e fixtures
+  // that only mock the dashboard's normal routes keep passing untouched.
+  try {
+    await homeOverview({ accounts, transactions, debits, myrTotals, categoryNames });
+  } catch (err) {
+    // A widget failure must never take down the dashboard render.
+    console.error('home overview failed:', err);
+  }
+
   if (skipped > 0) {
     root.appendChild(
       alertBanner({
@@ -661,4 +672,236 @@ function estBalance(account, txns) {
     sum += tx.direction === 'credit' ? Number(tx.amount) : -Number(tx.amount);
   }
   return sum;
+}
+
+// --------------------------- Part 6 (exact) — BeeCount one-screen home widgets
+
+// Three panels rendered right under the summary tiles: asset composition
+// (doughnut of est. balances), category share (top-5 spend bar strip) and a
+// 30-day spending trend. Everything is computed from data renderDashboard
+// ALREADY loaded — no new fetches — so the e2e fixtures that only mock the
+// dashboard's normal routes keep passing untouched.
+//
+// Chart.js is loaded via dynamic import (shared chunk with Reports) and every
+// instance is tracked so re-renders destroy old canvases; a theme flip
+// rebuilds the charts in-place (never the whole dashboard — edit mode locks
+// in dirty rows and a full re-render would drop them).
+let homeCharts = [];
+let homeRebuild = null;
+let homeThemeWatcherInstalled = false;
+
+const HOME_PALETTE = [
+  '#10b981', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444',
+  '#14b8a6', '#f97316', '#d946ef', '#84cc16', '#94a3b8',
+];
+
+async function homeOverview(root, { accounts, transactions, debits, myrTotals, categoryNames }) {
+  homeCharts.forEach((c) => c.destroy());
+  homeCharts = [];
+  homeRebuild = null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'row g-3 mb-3';
+  wrap.id = 'home-overview';
+
+  const panel = (labelText) => {
+    const col = document.createElement('div');
+    col.className = 'col-12 col-lg-4';
+    const card = document.createElement('div');
+    card.className = 'home-panel';
+    const label = document.createElement('div');
+    label.className = 'overview-label';
+    label.textContent = labelText;
+    const box = document.createElement('div');
+    box.className = 'chart-box';
+    card.append(label, box);
+    col.appendChild(card);
+    wrap.appendChild(col);
+    return box;
+  };
+
+  const assetBox = panel(t('dash.assetComposition'));
+  const shareBox = panel(t('dash.categoryShare'));
+  const trendBox = panel(t('dash.trend'));
+  root.appendChild(wrap);
+
+  // ---- asset composition: visible accounts, balances to MYR (MYR short-
+  // circuits in convert(); non-MYR balances use the latest rate — a balance
+  // snapshot is a "now" view, per ADR 0001).
+  const visible = accounts.filter((a) => !a.is_hidden);
+  const balanceRows = await Promise.all(
+    visible.map(async (acc) => {
+      const bal = estBalance(acc, transactions);
+      if (bal <= 0) return null;
+      const myr = acc.currency === 'MYR'
+        ? bal
+        : await convert(bal, acc.currency, 'MYR').catch(() => null);
+      return myr === null ? null : { name: acc.name, myr: Math.round(myr * 100) / 100 };
+    }),
+  );
+  const assetSlices = balanceRows.filter(Boolean);
+
+  // ---- category share: top 5 debits by MYR spend.
+  const sums = new Map();
+  for (const tx of debits) {
+    const myr = myrTotals.get(tx.id);
+    if (myr === null || myr === undefined) continue;
+    const name = tx.category_id && categoryNames.get(tx.category_id)
+      ? categoryNames.get(tx.category_id)
+      : t('col.unknown');
+    sums.set(name, (sums.get(name) ?? 0) + myr);
+  }
+  const ranked = [...sums.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const shareTotal = ranked.reduce((s, [, v]) => s + v, 0);
+
+  // ---- trend: daily debit spend from the loaded 30-day window.
+  const byDay = new Map();
+  for (const tx of debits) {
+    const myr = myrTotals.get(tx.id);
+    if (myr === null || myr === undefined) continue;
+    const day = (tx.transaction_date ?? '').slice(0, 10);
+    if (!day) continue;
+    byDay.set(day, (byDay.get(day) ?? 0) + myr);
+  }
+  const trendDays = [...byDay.keys()].sort();
+  const trendValues = trendDays.map((d) => Math.round(byDay.get(d) * 100) / 100);
+
+  // ---- static share strip (CSS bars, no canvas → theme-safe).
+  if (ranked.length === 0 || shareTotal <= 0) {
+    const empty = document.createElement('div');
+    empty.className = 'home-empty';
+    empty.textContent = t('dash.noTrendData');
+    shareBox.appendChild(empty);
+  } else {
+    for (const [name, value] of ranked) {
+      const row = document.createElement('div');
+      row.className = 'share-row';
+      const top = document.createElement('div');
+      top.className = 'share-top';
+      const nm = document.createElement('span');
+      nm.className = 'share-name';
+      nm.textContent = name;
+      const amt = document.createElement('span');
+      amt.className = 'share-amount';
+      amt.textContent = formatMoney(value, 'MYR');
+      top.append(nm, amt);
+      const bar = document.createElement('div');
+      bar.className = 'progress share-bar';
+      const fill = document.createElement('div');
+      fill.className = 'progress-bar';
+      fill.style.width = `${Math.round((value / shareTotal) * 100)}%`;
+      fill.setAttribute('role', 'progressbar');
+      bar.appendChild(fill);
+      row.append(top, bar);
+      shareBox.appendChild(row);
+    }
+  }
+
+  // ---- canvases: doughnut + trend. Built by one closure so a theme flip can
+  // destroy + redraw both with the active palette, in place.
+  const { default: Chart } = await import('chart.js/auto');
+
+  const drawCharts = async () => {
+    homeCharts.forEach((c) => c.destroy());
+    homeCharts = [];
+    const isDark = document.documentElement.dataset.bsTheme === 'dark';
+    const palette = {
+      grid: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+      text: isDark ? '#adb5bd' : '#495057',
+    };
+
+    // Assets: only render a doughnut when there is at least one positive slice.
+    if (assetSlices.length > 0) {
+      assetBox.replaceChildren();
+      const canvas = document.createElement('canvas');
+      assetBox.appendChild(canvas);
+      homeCharts.push(
+        new Chart(canvas, {
+          type: 'doughnut',
+          data: {
+            labels: assetSlices.map((s) => s.name),
+            datasets: [
+              {
+                data: assetSlices.map((s) => s.myr),
+                backgroundColor: assetSlices.map((_, i) => HOME_PALETTE[i % HOME_PALETTE.length]),
+                borderWidth: 2,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '62%',
+            plugins: {
+              legend: { labels: { color: palette.text, boxWidth: 12, padding: 14 } },
+            },
+          },
+        }),
+      );
+    } else {
+      assetBox.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'home-empty';
+      empty.textContent = t('dash.noAssetData');
+      assetBox.appendChild(empty);
+    }
+
+    // Trend: line over the loaded days; flat empty-state when nothing spent.
+    if (trendDays.length > 0 && trendValues.some((v) => v > 0)) {
+      trendBox.replaceChildren();
+      const canvas = document.createElement('canvas');
+      trendBox.appendChild(canvas);
+      homeCharts.push(
+        new Chart(canvas, {
+          type: 'line',
+          data: {
+            labels: trendDays.map((d) => d.slice(5)),
+            datasets: [
+              {
+                label: t('dash.trend'),
+                data: trendValues,
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16,185,129,0.12)',
+                fill: true,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.25,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { color: palette.text, maxTicksLimit: 6 }, grid: { display: false } },
+              y: { ticks: { color: palette.text }, grid: { color: palette.grid } },
+            },
+          },
+        }),
+      );
+    } else {
+      trendBox.replaceChildren();
+      const empty = document.createElement('div');
+      empty.className = 'home-empty';
+      empty.textContent = t('dash.noTrendData');
+      trendBox.appendChild(empty);
+    }
+  };
+
+  homeRebuild = drawCharts;
+  await drawCharts();
+
+  // Theme watcher: charts paint with literals (canvas), so a theme flip must
+  // redraw them. The observer survives navigation (module-level flag) and only
+  // rebuilds charts — never the whole dashboard, so edit-mode rows survive.
+  if (!homeThemeWatcherInstalled) {
+    homeThemeWatcherInstalled = true;
+    new MutationObserver(() => {
+      if (homeRebuild) homeRebuild().catch(() => {});
+    }).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-bs-theme'],
+    });
+  }
 }
