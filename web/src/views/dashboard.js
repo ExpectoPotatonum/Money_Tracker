@@ -215,7 +215,7 @@ export async function renderDashboard(root) {
   // from data already loaded above — no new fetches — so the e2e fixtures
   // that only mock the dashboard's normal routes keep passing untouched.
   try {
-    await homeOverview({ accounts, transactions, debits, myrTotals, categoryNames });
+    await homeOverview(root, { accounts, transactions, debits, myrTotals, categoryNames });
   } catch (err) {
     // A widget failure must never take down the dashboard render.
     console.error('home overview failed:', err);

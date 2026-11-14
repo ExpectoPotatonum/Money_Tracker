@@ -331,6 +331,18 @@ test('signed-in dashboard renders transactions and the MYR total', async ({ page
   }
 });
 
+test('home overview widgets render without a load error', async ({ page }) => {
+  // Regression: homeOverview(root, {...}) was called without `root`, so the
+  // destructuring threw inside its try/catch and all three home panels silently
+  // disappeared. Assert the panels AND that no "Failed to load" alert leaked.
+  await openDashboard(page);
+
+  await expect(page.locator('#home-overview')).toBeVisible();
+  await expect(page.locator('#home-overview')).toContainText('Asset composition');
+  await expect(page.locator('#home-overview')).toContainText('Category share (30d)');
+  await expect(page.locator('.alert-danger')).toHaveCount(0);
+});
+
 test('stale heartbeat raises the tracker-may-be-offline banner', async ({ page }) => {
   await openDashboard(page, { heartbeatAgeHours: 30 });
   await expect(page.locator('.alert-warning').first()).toContainText('Tracker may be offline');
