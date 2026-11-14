@@ -474,11 +474,21 @@ export function transactionTable({
     const amount = document.createElement('input');
     amount.type = 'number';
     amount.step = '0.01';
-    amount.min = '0';
+    // A transaction amount is always > 0 (DB CHECK + parser invariant). 0.01
+    // is the floor; the field also flags an emptied/garbled value inline so the
+    // user sees it before leaving edit mode (the API refuses the save).
+    amount.min = '0.01';
     amount.className = 'form-control form-control-sm text-end';
     amount.value = draft.amount;
+    const syncValidity = () => {
+      const value = Number(amount.value);
+      const bad = amount.value === '' || !Number.isFinite(value) || value <= 0;
+      amount.classList.toggle('is-invalid', bad);
+      amount.title = bad ? tr('col.amountInvalid') : '';
+    };
     amount.addEventListener('input', () => {
       draft.amount = amount.value;
+      syncValidity();
       report();
     });
     const currency = document.createElement('select');
@@ -577,8 +587,14 @@ function normalizeDraft(draft, original) {
   if (draft.transaction_date !== original.transaction_date) {
     patch.transaction_date = draft.transaction_date;
   }
-  if (Number(draft.amount) !== Number(original.amount)) {
-    patch.amount = Number(draft.amount);
+  // Never let a cleared/garbled amount field ride into the PATCH as 0: '' →
+  // Number('') === 0 would zero out a real transaction. An invalid value is
+  // sent as 0 so updateTransaction rejects it with the "greater than zero"
+  // message (the row stays dirty and is retried once fixed).
+  const amountValue = Number(draft.amount);
+  const safeAmount = Number.isFinite(amountValue) ? amountValue : 0;
+  if (safeAmount !== Number(original.amount)) {
+    patch.amount = safeAmount;
   }
   if (draft.currency !== original.currency) patch.currency = draft.currency;
   if (draft.direction !== original.direction) patch.direction = draft.direction;

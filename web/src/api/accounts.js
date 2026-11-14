@@ -105,6 +105,11 @@ export async function insertTransfer({
 }) {
   const group = crypto.randomUUID();
   const dateIso = new Date(date).toISOString();
+  // Both halves are real movements — never 0 (mirrors the DB CHECK
+  // transactions_amount_positive, migration 202611140001).
+  if (!(Number(sourceAmount) > 0) || !(Number(destAmount) > 0)) {
+    throw new Error('transfer amounts must be greater than zero');
+  }
   const base = {
     transfer_group_id: group,
     transaction_date: dateIso,

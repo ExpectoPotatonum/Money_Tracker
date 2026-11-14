@@ -151,6 +151,11 @@ export function parseAmount(raw: string): number | null {
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
   const value = Number(cleaned);
   if (!Number.isFinite(value)) return null;
+  // A transaction amount is always strictly positive (mirrors the DB CHECK
+  // transactions_amount_positive, migration 202611140001). A body whose only
+  // amount token is 0.00 is not a transaction — return null so the row lands in
+  // the review inbox instead of writing a phantom zero-amount row.
+  if (value <= 0) return null;
   return Math.round(value * 100) / 100;
 }
 

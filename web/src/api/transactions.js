@@ -80,8 +80,23 @@ export async function getCategoryTree() {
 // corrects by hand). The authenticated role has UPDATE/DELETE on transactions
 // under the owner_only RLS policy (202608180001_grant_privileges.sql).
 export async function updateTransaction(id, patch) {
+  assertPositiveAmount(patch);
   const { error } = await supabase.from('transactions').update(patch).eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+// An amount is always strictly positive (DB CHECK transactions_amount_positive,
+// migration 202611140001). This is the client-side mirror of it: edit mode used
+// to PATCH `amount: 0` whenever a row's number field was left empty, because an
+// empty <input type="number"> reads as '' and Number('') === 0 — a real
+// transaction silently became a RM 0.00 row. Failing here surfaces the problem
+// in the dashboard's "Save failed" alert instead.
+function assertPositiveAmount(row) {
+  if (!row || !Object.prototype.hasOwnProperty.call(row, 'amount')) return;
+  const amount = Number(row.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('amount must be greater than zero');
+  }
 }
 
 // Manual quick-add / AI-escalation rows (Phase B/C). Requires the
@@ -89,6 +104,7 @@ export async function updateTransaction(id, patch) {
 // 'manual' rows; other sources must carry a raw_notification_id (schema
 // check). The authenticated role has INSERT under the owner_only RLS policy.
 export async function insertTransaction(row) {
+  assertPositiveAmount(row);
   const { data, error } = await supabase.from('transactions').insert(row).select('id').single();
   if (error) throw new Error(error.message);
   return data;

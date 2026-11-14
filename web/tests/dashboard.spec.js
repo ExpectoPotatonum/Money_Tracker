@@ -67,6 +67,31 @@ const TAG_GROUPS = [
   },
 ];
 
+// Date fixtures are anchored inside a MYT calendar month (the dashboard groups
+// every total by Malaysia-time month). Using "now minus N days" crosses into
+// the previous month whenever the suite runs near a month boundary.
+const MYT_OFFSET_MS = 8 * 3_600_000;
+
+function inMonth(offsetMonths, daysAgo = 0) {
+  const now = new Date(Date.now() + MYT_OFFSET_MS);
+  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offsetMonths, 1));
+  const lastDay = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  const anchorDay = offsetMonths === 0 ? now.getUTCDate() : lastDay;
+  const day = Math.max(1, Math.min(lastDay, anchorDay - daysAgo));
+  // 04:00 UTC = 12:00 MYT — unambiguously inside the intended MYT day.
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), day, 4, 0, 0)).toISOString();
+}
+
+function monthLabel(offsetMonths) {
+  const now = new Date(Date.now() + MYT_OFFSET_MS);
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offsetMonths, 1));
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  return `${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
 const TRANSACTIONS = [
   {
     id: 't-1',
@@ -78,7 +103,7 @@ const TRANSACTIONS = [
     category_id: '44444444-4444-4444-8444-444444444444',
     account_id: 'a-1', // TnG eWallet (Phase 3)
     source_package: 'com.touchngo.tngdigital',
-    transaction_date: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    transaction_date: inMonth(0, 2),
     source_app_label: 'TnG eWallet',
     status: 'confirmed',
     // M2M embed shape as returned by getTransactions' nested select.
@@ -96,7 +121,7 @@ const TRANSACTIONS = [
     category_id: null,
     account_id: null, // unassigned — renders the inline account picker
     source_package: 'my.com.cimb',
-    transaction_date: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+    transaction_date: inMonth(0, 5),
     source_app_label: 'CIMB Octo MY',
     status: 'confirmed',
   },
@@ -110,7 +135,7 @@ const TRANSACTIONS = [
     category_id: '11111111-1111-4111-8111-111111111111',
     account_id: 'a-1',
     source_package: 'com.touchngo.tngdigital',
-    transaction_date: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    transaction_date: inMonth(0, 3),
     source_app_label: 'TnG eWallet',
     status: 'confirmed',
   },
@@ -127,7 +152,7 @@ const TRANSACTIONS = [
     category_id: null,
     account_id: null, // unassigned
     source_package: 'my.com.hongleongconnect.mobileconnect',
-    transaction_date: new Date(Date.now() - 4 * 86_400_000).toISOString(),
+    transaction_date: inMonth(0, 4),
     source_app_label: 'HLB Connect',
     status: 'confirmed',
   },
@@ -149,7 +174,7 @@ const TRANSFER_PAIR = [
     account_id: 'a-1',
     transfer_group_id: 'g-t1',
     source_package: 'manual',
-    transaction_date: new Date(Date.now() - 86_400_000).toISOString(),
+    transaction_date: inMonth(0, 1),
     source_app_label: null,
     status: 'confirmed',
   },
@@ -164,7 +189,7 @@ const TRANSFER_PAIR = [
     account_id: 'a-2',
     transfer_group_id: 'g-t1',
     source_package: 'manual',
-    transaction_date: new Date(Date.now() - 86_400_000).toISOString(),
+    transaction_date: inMonth(0, 1),
     source_app_label: null,
     status: 'confirmed',
   },
@@ -331,6 +356,41 @@ test('signed-in dashboard renders transactions and the MYR total', async ({ page
   }
 });
 
+test('dashboard totals are scoped to the selected calendar month', async ({ page }) => {
+  // A row in the previous month must be excluded from this month's tiles/table
+  // and included when navigating back — proving the grouping is calendar-month
+  // based, not a rolling 30-day window.
+  const PREV = {
+    ...TRANSACTIONS[0],
+    id: 't-prev',
+    amount: 99,
+    merchant_display: 'Old Gym',
+    merchant_raw: 'OLD GYM',
+    transaction_date: inMonth(-1, 1),
+  };
+  await openDashboard(page, { transactions: [...TRANSACTIONS, PREV] });
+
+  const label = page.locator('#dash-month-label');
+  await expect(label).toHaveText(monthLabel(0));
+  await expect(page.locator('#total-myr')).toHaveText('RM 68.00');
+  await expect(page.locator('table')).not.toContainText('Old Gym');
+
+  // Comparison line: RM 68 this month vs RM 99 last month → 31.3% lower spend.
+  await expect(page.locator('#month-compare')).toContainText(monthLabel(-1));
+  await expect(page.locator('#month-compare')).toContainText('31.3%');
+
+  await page.click('#month-prev');
+  await expect(label).toHaveText(monthLabel(-1));
+  await expect(page.locator('#total-myr')).toHaveText('RM 99.00');
+  await expect(page.locator('tbody tr', { hasText: 'Old Gym' })).toHaveCount(1);
+  await expect(page.locator('tbody tr', { hasText: 'Kopitiam' })).toHaveCount(0);
+
+  // "This month" jumps back to the default view.
+  await page.click('#month-this');
+  await expect(label).toHaveText(monthLabel(0));
+  await expect(page.locator('#total-myr')).toHaveText('RM 68.00');
+});
+
 test('home overview widgets render without a load error', async ({ page }) => {
   // Regression: homeOverview(root, {...}) was called without `root`, so the
   // destructuring threw inside its try/catch and all three home panels silently
@@ -339,7 +399,7 @@ test('home overview widgets render without a load error', async ({ page }) => {
 
   await expect(page.locator('#home-overview')).toBeVisible();
   await expect(page.locator('#home-overview')).toContainText('Asset composition');
-  await expect(page.locator('#home-overview')).toContainText('Category share (30d)');
+  await expect(page.locator('#home-overview')).toContainText('Category share');
   await expect(page.locator('.alert-danger')).toHaveCount(0);
 });
 
@@ -412,6 +472,41 @@ test('picking a category on a blank-category row issues a PATCH', async ({ page 
   await expect.poll(() => patched.length).toBe(1);
   expect(patched[0].url).toContain('transactions');
   expect(patched[0].postData).toContain('"category_id":"44444444-4444-4444-8444-444444444444"');
+});
+
+test('edit mode: a cleared amount is flagged and never saved as zero', async ({ page }) => {
+  const patched = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PATCH' && req.url().includes('/rest/v1/transactions')) {
+      patched.push(req.postData());
+    }
+  });
+  const dialogs = [];
+  page.on('dialog', async (dialog) => {
+    dialogs.push(dialog.message());
+    await dialog.dismiss();
+  });
+  await openDashboard(page);
+
+  await page.click('#edit-mode-toggle');
+  // In edit mode the receiver cell is an input, so the row text no longer holds
+  // the merchant name — pick the amount field of the first transaction row.
+  const amount = page.locator('tbody tr').first().locator('input[type="number"]');
+  await amount.fill('');
+
+  // Inline feedback the moment the field goes empty — a transaction amount is
+  // never 0 (DB CHECK transactions_amount_positive, migration 202611140001).
+  await expect(amount).toHaveClass(/is-invalid/);
+  expect(await amount.getAttribute('min')).toBe('0.01');
+
+  await page.click('#edit-mode-toggle');
+
+  // The API refuses the save (this is what used to write amount: 0), edit mode
+  // stays ON so the row is not dropped, and no PATCH carried a zero amount.
+  await expect.poll(() => dialogs.length).toBe(1);
+  expect(dialogs[0]).toContain('amount must be greater than zero');
+  await expect(page.locator('#edit-mode-toggle')).toHaveText('Edit mode: ON');
+  expect(patched.some((body) => body && body.includes('"amount":0'))).toBe(false);
 });
 
 test('edit mode: renaming the source issues a PATCH for that label', async ({ page }) => {
