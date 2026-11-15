@@ -19,7 +19,9 @@ PL/pgSQL run on every plan, including Free.
 
 - Migrations: `202608180002_db_parser_field_map.sql` (schema addition),
   `202608180003_db_parser_infra.sql` (parse function + trigger + backfill),
-  `202608180004_seed_templates.sql` (TnG + CIMB templates from real samples).
+  `202608180004_seed_templates.sql` (TnG + CIMB templates from real samples),
+  `202611140001_amount_must_be_positive.sql` (amount guard + trigger durability,
+  see "Amounts are never zero" below).
 - The Edge Function code stays in `supabase/functions/parse-notification/` as
   the **fallback if the project ever upgrades to Pro**. It and the DB parser
   share the same design goals (idempotent writes, decoupled re-runnable logic).
@@ -72,6 +74,41 @@ select parse_raw_notification('<uuid>');
 > marketing/reward bodies `ignored` before parsing, and `source_suffix_title`
 > (202609010002) renders the dashboard's Send-from column as `<app> - <title>` (Samsung Wallet
 > shows the card name).
+
+## Amounts are never zero
+
+`transactions.amount` is always strictly positive — `check (amount > 0)`,
+constraint `transactions_amount_positive` (migration `202611140001`). Three
+places enforce it, and each one matters on its own:
+
+1. **Parser** — `parse_raw_notification` casts the matched amount once
+   (`v_amount_num`). If it is `<= 0` the raw row is marked **`ignored`** with
+   `parse_error = 'non-positive amount'` and **no transaction is written**. A
+   non-numeric amount group becomes `failed` / `'unparseable amount'` rather
+   than raising.
+2. **Trigger durability** — `trigger_parse_raw_notification()` wraps the parser
+   in `exception when others`. A parser error (including a CHECK violation) can
+   never abort the `INSERT` that stores the capture: the notification survives
+   as `failed` / `'parser error: …'` and can be re-parsed after a fix
+   (`agents.md` §5 — capture is unconditional and durable).
+3. **Clients** — `updateTransaction` / `insertTransaction` / `insertTransfer`
+   in the web app reject a non-positive amount with
+   `amount must be greater than zero`; the edit-mode amount field has
+   `min="0.01"` and an inline `is-invalid` flag. The dormant Edge Function's
+   `parseAmount` returns `null` for `<= 0` for the same reason.
+
+Why the guard exists: the loose fallback (`loose_parse_amount`) matches the
+**first** `<CCY> <amount>` token anywhere in the body, so a notification whose
+only amount-shaped token is `0.00` — zero-value card holds, "outstanding balance
+RM 0.00" alerts, promo copy that slipped past `reject_pattern` (notably from
+packages with no strict template yet) — used to become a real
+`needs_review`/`low` transaction at RM 0.00.
+
+Existing zero/negative rows are cleaned by `202611140001`: the phantom
+transaction is deleted, its raw row is **kept** and flipped to `ignored` (raw
+rows are never deleted, §16), and `duplicate_of` links pointing at it are
+cleared. Because the raw row ends up `ignored`, `backfill_resync()` cannot
+recreate it.
 
 ## Postgres regex gotchas (read before writing a `body_pattern`)
 
