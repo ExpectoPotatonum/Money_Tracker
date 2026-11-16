@@ -35,7 +35,10 @@ function record(label: string, ok: boolean, detail?: string): void {
 function runFromFixtures(): void {
   for (const t of loadTemplates()) {
     if (!t.sample_input) continue;
-    const parsed = parseNotification({ text_body: t.sample_input }, t);
+    const parsed = parseNotification({
+      title: t.sample_title ?? null,
+      text_body: t.sample_input,
+    }, t);
     const label = `${t.package_name} v${t.version} sample`;
     if (!parsed) {
       record(label, false, "sample_input no longer parses");
@@ -79,9 +82,20 @@ async function runFromDatabase(): Promise<void> {
     throw new Error(`could not load parser_templates: ${error.message}`);
   }
 
+  // parser_templates has no title column, so the sample title (if the template
+  // is title-gated) comes from the checked-in fixture keyed by package+version.
+  // A live template with no fixture entry is validated body-only.
+  const sampleTitles = new Map<string, string | null>();
+  for (const f of loadTemplates()) {
+    sampleTitles.set(`${f.package_name}#${f.version}`, f.sample_title ?? null);
+  }
+
   for (const t of (templates ?? []) as ParserTemplate[]) {
     if (!t.sample_input) continue;
-    const parsed = parseNotification({ text_body: t.sample_input }, t);
+    const parsed = parseNotification({
+      title: sampleTitles.get(`${t.package_name}#${t.version}`) ?? null,
+      text_body: t.sample_input,
+    }, t);
     const label = `${t.package_name} v${t.version} sample`;
     if (!parsed) {
       record(label, false, "sample_input no longer parses");

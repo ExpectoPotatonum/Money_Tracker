@@ -5,6 +5,14 @@
 import type { ParserTemplate } from "../functions/_shared/types.ts";
 
 export interface FixtureTemplate extends ParserTemplate {
+  /**
+   * The notification title that accompanied `sample_input`, when the live
+   * template's `title_pattern` is non-null. `parser_templates` has no title
+   * column, so this lives only in the fixture; the harness and the unit test
+   * pass it through to `parseNotification` so title-gated templates are
+   * actually exercised (a null title makes `titleMatches` fail).
+   */
+  sample_title?: string | null;
   sample_expected: {
     amount: number;
     currency: string;

@@ -159,20 +159,27 @@ export function parseAmount(raw: string): number | null {
   return Math.round(value * 100) / 100;
 }
 
+/**
+ * Direction inference. Mirrors the live PL/pgSQL `infer_direction`
+ * (migration 202609010001) so the paid-tier Edge Function fallback classifies a
+ * notification the same way the Free-tier trigger does.
+ *
+ * The case that needs context rather than a keyword is "transferred": a bare
+ * "transferred" is a debit ("You have successfully transferred RM X to
+ * <name>."), while "transferred ... to you" is a P2P receive (credit). The old
+ * keyword-only version had no such rule, so a TnG "… has transferred RM X to
+ * you" sample came out debit here but credit in SQL. See agents.md §15.
+ */
 function directionFrom(
   groupValue: string | undefined,
   text: string,
 ): Direction {
-  if (groupValue) {
-    const v = groupValue.toLowerCase();
-    if (/credit|receive|top.?up|refund|cashback|deposit|transfer.?in/.test(v)) {
-      return "credit";
-    }
-    if (/debit|pay|spend|charge|withdraw|transfer.?out/.test(v)) return "debit";
-  }
-  const lower = text.toLowerCase();
-  for (const word of CREDIT_WORDS) if (lower.includes(word)) return "credit";
-  for (const word of DEBIT_WORDS) if (lower.includes(word)) return "debit";
+  // coalesce(group, body): a captured direction group, else the whole body —
+  // matching the SQL `infer_direction(coalesce(m[...], v_body))` call.
+  const hay = (groupValue || text).toLowerCase();
+  if (hay.includes("transferred") && hay.includes("to you")) return "credit";
+  for (const word of CREDIT_WORDS) if (hay.includes(word)) return "credit";
+  for (const word of DEBIT_WORDS) if (hay.includes(word)) return "debit";
   return "debit"; // conservative default: most notifications are spends
 }
 

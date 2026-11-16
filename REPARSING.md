@@ -137,8 +137,10 @@ date_format  => 'DD-Mon-YYYY, HH24:MI:SS'   -- Postgres to_timestamp tokens
 ## Validation
 
 Before applying a changed `body_pattern`, replay it against every stored
-`sample_input` for that `package_name`. The SQL-side equivalent of the old
-`replay-templates.ts` harness is, per pattern, a check like:
+`sample_input` for that `package_name`. The checked-in harness
+(`supabase/scripts/replay-templates.ts`, run by `supabase.yml` CI against
+`fixtures/templates.json`) covers the JS `parser.ts` side; the SQL-side
+equivalent, per pattern, is a check like:
 
 ```sql
 select regexp_match(

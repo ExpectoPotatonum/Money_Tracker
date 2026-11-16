@@ -49,7 +49,10 @@ function textOf(body: string): SanitizedText {
 // ---------------------------------------------------------------------------
 Deno.test("every fixture template strictly parses its own sanitized sample_input", () => {
   for (const t of loadTemplates()) {
-    let parsed = parseNotification(textOf(t.sample_input!), t);
+    let parsed = parseNotification({
+      title: t.sample_title ?? null,
+      text_body: t.sample_input!,
+    }, t);
     parsed = notNull(
       parsed,
       `${t.package_name} v${t.version} failed on its own sample`,

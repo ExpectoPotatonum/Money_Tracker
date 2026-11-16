@@ -1,42 +1,224 @@
 {
-  "comment": "PLACEHOLDER templates awaiting phase-1 real captures (agents.md §14). Sample inputs are written against the SANITIZED form of a notification — OTPs, balances, and account/card numbers already stripped (agents.md §8). Replace these bodies/samples with real device captures before relying on parse results; the shape (sample_input + sample_expected) is the regression baseline the harness replays.",
+  "comment": "Checked-in regression baseline for supabase/scripts/replay-templates.ts and tests/parser_test.ts. One entry per ACTIVE live parser_templates row (202608180004, 202609010001, 202609010003, 202609050001, 202609080001); CIMB v2 is deactivated and intentionally omitted. sample_input is the SANITIZED capture (agents.md §8) taken from supabase/data.sql, and sample_title is the notification title that goes with it — parser_templates has no title column, so a title-gated template's sample title lives only here. body_pattern uses JS named groups and \\s because the harness runs the pure functions/parse-notification/parser.ts; the live PL/pgSQL templates use positional groups + field_map and Postgres [[:space:]] instead, so these are a faithful JS-side mirror, not a drop-in. Keep in sync with the migrations.",
   "templates": [
     {
       "id": "tpl-tng-1",
       "package_name": "my.com.tngdigital.ewallet",
-      "app_label": "TnG eWallet",
+      "app_label": "TNG eWallet",
       "version": 1,
       "active": true,
-      "title_pattern": null,
-      "body_pattern": "You have paid RM\\s*(?<amount>[\\d,]+\\.\\d{2}) to (?<merchant>.+?)(?:\\.|$)",
+      "title_pattern": "received",
+      "body_pattern": "^(?<merchant>.+) has transferred RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) to you",
       "date_format": null,
       "default_currency": "MYR",
-      "sample_input": "You have paid RM 12.00 to Shopee. [REDACTED-BALANCE]",
-      "notes": "PLACEHOLDER — replace body_pattern and sample_input with a sanitized real capture.",
+      "sample_title": "You’ve received money!",
+      "sample_input": "HOO JET YUNG has transferred RM 1.00 to you. Tap here to check the transaction details.",
+      "notes": "p2p receive: <sender> has transferred RM <amount> to you (credit).",
       "sample_expected": {
-        "amount": 12,
+        "amount": 1,
+        "currency": "MYR",
+        "direction": "credit",
+        "merchant_raw": "HOO JET YUNG"
+      }
+    },
+    {
+      "id": "tpl-tng-2",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TNG eWallet",
+      "version": 2,
+      "active": true,
+      "title_pattern": "DuitNow|Payment|paid",
+      "body_pattern": "^You have paid RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) to (?<merchant>.+)\\.$",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "DuitNow Payment",
+      "sample_input": "You have paid RM12.50 to KEDAI KOPI 66.",
+      "notes": "TnG DuitNow outbound \"paid ... to <merchant>.\" (debit).",
+      "sample_expected": {
+        "amount": 12.5,
         "currency": "MYR",
         "direction": "debit",
-        "merchant_raw": "Shopee"
+        "merchant_raw": "KEDAI KOPI 66"
+      }
+    },
+    {
+      "id": "tpl-tng-3",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TNG eWallet",
+      "version": 3,
+      "active": true,
+      "title_pattern": "ALIPAY|paid",
+      "body_pattern": "^You have paid RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) at (?<merchant>.+)$",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "ALIPAY+ PAYMENT",
+      "sample_input": "You have paid RM29.16 at PINDUODUO",
+      "notes": "TnG outbound \"paid ... at <merchant>\" (Alipay+).",
+      "sample_expected": {
+        "amount": 29.16,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "PINDUODUO"
+      }
+    },
+    {
+      "id": "tpl-tng-4",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TNG eWallet",
+      "version": 4,
+      "active": true,
+      "title_pattern": "DuitNow Transfer|transferred",
+      "body_pattern": "^You have successfully transferred RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) to (?<merchant>.+)\\.$",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "DuitNow Transfer is successful!",
+      "sample_input": "You have successfully transferred RM 100.00 to HOO JET YUNG.",
+      "notes": "TnG DuitNow outbound transfer to a recipient (debit) — a bare \"transferred\" is NOT credit.",
+      "sample_expected": {
+        "amount": 100,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "HOO JET YUNG"
+      }
+    },
+    {
+      "id": "tpl-tng-5",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TNG eWallet",
+      "version": 5,
+      "active": true,
+      "title_pattern": "Payment To",
+      "body_pattern": "^(?<merchant>.+): RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) has been deducted",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "Payment To: Berjaya Starbucks Coffee Company Sdn Bhd",
+      "sample_input": "Berjaya Starbucks Coffee Company Sdn Bhd: RM20.00 has been deducted from your TNG eWallet. Merchant Reference No. [REDACTED-ACCOUNT]",
+      "notes": "TnG \"Payment To <merchant>: RM X has been deducted...\".",
+      "sample_expected": {
+        "amount": 20,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "Berjaya Starbucks Coffee Company Sdn Bhd"
+      }
+    },
+    {
+      "id": "tpl-tng-6",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TNG eWallet",
+      "version": 6,
+      "active": true,
+      "title_pattern": "Transfer Successful|transferred",
+      "body_pattern": "^RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) has been successfully transferred to (?<merchant>.+)\\.$",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "Transfer Successful.",
+      "sample_input": "RM 50.00 has been successfully transferred to ONG POOK HUN.",
+      "notes": "TnG outbound \"<amount> has been successfully transferred to <recipient>.\" (amount-first, debit).",
+      "sample_expected": {
+        "amount": 50,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "ONG POOK HUN"
+      }
+    },
+    {
+      "id": "tpl-tng-7",
+      "package_name": "my.com.tngdigital.ewallet",
+      "app_label": "TNG eWallet",
+      "version": 7,
+      "active": true,
+      "title_pattern": "Payment successful|paid",
+      "body_pattern": "^You have paid RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) for (?<merchant>.+)\\.$",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "Payment successful",
+      "sample_input": "You have paid RM40.00 for RON95.",
+      "notes": "TnG outbound \"paid ... for <item>\" (e.g. petrol, bill). The live row also carries reject_pattern (marketing/reward keyword guard); parser.ts does not implement that pre-check.",
+      "sample_expected": {
+        "amount": 40,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "RON95"
       }
     },
     {
       "id": "tpl-cimb-1",
       "package_name": "com.cimb.cimbocto",
-      "app_label": "CIMB Octo MY",
+      "app_label": "CIMB OCTO MY",
       "version": 1,
       "active": true,
       "title_pattern": null,
-      "body_pattern": "RM\\s*(?<amount>[\\d,]+\\.\\d{2}) debited from Account \\[REDACTED-ACCOUNT\\] on (?<txn_date>\\d{2}/\\d{2}/\\d{4} \\d{2}:\\d{2})",
-      "date_format": "dd/MM/yyyy HH:mm",
+      "body_pattern": "DuitNow to Acct RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) to (?<merchant>.+) on (?<txn_date>[0-9]{1,2}-[A-Za-z]{3}-[0-9]{4},\\s*[0-9]{2}:[0-9]{2}:[0-9]{2})",
+      "date_format": "DD-Mon-YYYY, HH24:MI:SS",
       "default_currency": "MYR",
-      "sample_input": "RM 45.00 debited from Account [REDACTED-ACCOUNT] on 15/08/2026 14:30. [REDACTED-BALANCE]",
-      "notes": "PLACEHOLDER — replace body_pattern and sample_input with a sanitized real capture.",
+      "sample_title": null,
+      "sample_input": "DuitNow to Acct RM 1.00 to HOO JET YUNG/Touch n Go on 30-Aug-2026, 01:22:56. Call the no at the back of your card for queries.",
+      "notes": "DuitNow outbound transfer to an account/wallet; txn_date is local MYT (migration 202609070001).",
       "sample_expected": {
-        "amount": 45,
+        "amount": 1,
         "currency": "MYR",
         "direction": "debit",
-        "merchant_raw": null
+        "merchant_raw": "HOO JET YUNG/Touch n Go"
+      }
+    },
+    {
+      "id": "tpl-cimb-3",
+      "package_name": "com.cimb.cimbocto",
+      "app_label": "CIMB OCTO MY",
+      "version": 3,
+      "active": true,
+      "title_pattern": null,
+      "body_pattern": "CIMB:RM\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) was charged to your Debit Card on [0-9]{1,2}-[0-9]{1,2}-[0-9]{2} at (?<merchant>.+)\\.\\s*Pls",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": null,
+      "sample_input": "CIMB:RM 4.00 was charged to your Debit Card on 05-09-26 at PANAXIS-SNWY CA. Pls call the no. at the back of your card for any enquiry",
+      "notes": "CIMB card debit; the card date carries no time of day, so txn_date is not captured and transaction_date falls back to posted_at.",
+      "sample_expected": {
+        "amount": 4,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "PANAXIS-SNWY CA"
+      }
+    },
+    {
+      "id": "tpl-samsung-1",
+      "package_name": "com.samsung.android.spay",
+      "app_label": "Samsung Wallet",
+      "version": 1,
+      "active": true,
+      "title_pattern": null,
+      "body_pattern": "^(?<merchant>.+) - .+ (?<currency>RM|MYR)\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9])$",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "HLB Debit Card",
+      "sample_input": "MUJI - QUEENSBAY MALL MYR 113.20",
+      "notes": "Samsung Wallet card debit: \"<card> - <location> <CCY> <amount>\". The live row sets source_suffix_title so source_app_label reads \"Samsung Wallet - HLB Debit Card\".",
+      "sample_expected": {
+        "amount": 113.2,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "MUJI"
+      }
+    },
+    {
+      "id": "tpl-wise-1",
+      "package_name": "com.transferwise.android",
+      "app_label": "Wise",
+      "version": 1,
+      "active": true,
+      "title_pattern": "Card payment",
+      "body_pattern": "^\\s*(?<amount>[0-9][0-9,]*\\.[0-9][0-9]) (?<currency>MYR) spent at (?<merchant>[^.]+)\\.",
+      "date_format": null,
+      "default_currency": "MYR",
+      "sample_title": "Card payment",
+      "sample_input": "25.90 MYR spent at Apple. You're low on spending money. Tap to add more.",
+      "notes": "Wise debit card payment: \"<amount> <CCY> spent at <merchant>.\" — amount-first, which the loose fallback does not match.",
+      "sample_expected": {
+        "amount": 25.9,
+        "currency": "MYR",
+        "direction": "debit",
+        "merchant_raw": "Apple"
       }
     }
   ]
