@@ -31,7 +31,7 @@ Two things follow that aren't explicit in `agents.md` but shape how the code its
 
 ## 2. Repository layout — refined
 
-Builds on `agents.md` §3, adding what a maintainable repo needs once there's more than one contributor (human or agent) touching it: tests, CI, a place for ADRs, and the regression harness §15 leaves as an open TODO.
+Builds on `agents.md` §3, adding what a maintainable repo needs once there's more than one contributor (human or agent) touching it: tests, CI, a place for ADRs, and the regression harness that closes §15's parser-template TODO.
 
 ```
 /android
@@ -103,7 +103,7 @@ export function parseNotification(
 
 - **Strict TypeScript** (`strict: true`, no `any`) — the payload from a Database Webhook is untrusted input from the app's own pipeline, but it's still worth validating its shape before use (a malformed row shouldn't crash the function or silently write garbage).
 - **`parse_status` as a discriminated union in code**, even though it's `text` with a `check` constraint in Postgres — mapping the DB string to a typed union at the boundary catches typos at compile time instead of at 2am when a row silently falls through every branch.
-- **The regression harness (`scripts/replay-templates.ts`)** is the concrete answer to §15's open TODO: load every `sample_input` for a `package_name`, run the candidate `body_pattern` against each, and fail loudly if a previously-matching sample stops matching. This is cheap specifically *because* `parser.ts` is a pure function — no test database, no mocking, just strings in and structured data out. Worth writing before there's a second template, not after — retrofitting tests onto template #6 after "fixed HLB, broke TnG" happens once is a much worse time to start.
+- **The regression harness (`scripts/replay-templates.ts`)** is the concrete answer to §15's parser-template TODO: load every `sample_input` for a `package_name`, run the candidate `body_pattern` against each, and fail loudly if a previously-matching sample stops matching. This is cheap specifically *because* `parser.ts` is a pure function — no test database, no mocking, just strings in and structured data out. It shipped early, before there was a second template, precisely because retrofitting tests onto template #6 after "fixed HLB, broke TnG" happens once is a much worse time to start. Its reach is bounded by the checked-in `fixtures/templates.json`, which is still placeholder-only (TnG v1 + CIMB v1) until real sanitized captures are exported into it.
 - **Migrations are forward-only, one file per change**, named `YYYYMMDDHHMM_description.sql`. No editing a merged migration — a mistake becomes a new migration that corrects it, same immutability principle as §16 applies to `raw_notifications` and `parser_templates`.
 
 ## 5. Web dashboard architecture
