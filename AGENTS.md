@@ -78,7 +78,7 @@ components/
   budgetManager.js   Overall + per-category budgets
   exportDialog.js    CSV export dialog — month + scope (all / spending / money in)
   settingsDialog.js  LLM key/model, language selector, change password
-  transactionTable.js  Transaction table (read-only + edit-mode cells); rows carry data-tx-id / data-col for targeted patching
+  transactionTable.js  Transaction table (read-only + edit-mode cells; merged Account column, `≈ RM` subtext for foreign amounts, tinted category pills); rows carry data-tx-id / data-col / data-cat for targeted patching + filtering
 lib/
   i18n.js            t() function — en/zh-CN dictionary, locale from localStorage
   logger.js          IndexedDB-backed error log with rotation
@@ -100,7 +100,7 @@ utils/
   sources.js         source (payment-method) picker — presets + Custom text, shared by NL modal & edit mode
 views/
   authGate.js        Sign-in / sign-up / forgot-password forms
-  dashboard.js       Main month-scoped view, header icon buttons + edit-mode switch, in-memory targeted updates
+  dashboard.js       Main month-scoped view, sticky header + icon buttons + animated edit-mode switch, Recent Transactions search/filter, in-memory targeted updates
   reports.js         #/reports — balance trends + charts (Chart.js loaded as a code-split chunk)
   reviewInbox.js     Failed/needs_review rows + per-row Ask AI escalation
   rawNotifications.js  #/raw — read-only paged raw_notifications audit log
@@ -433,6 +433,17 @@ Still in scope despite the SMS/email exclusion: cross-app duplicate detection (�
   - **Header + sidebar**: "Add from text" and "Move money" are now inline-SVG icon buttons, and Edit mode is a `role="switch"` toggle carrying `aria-checked` (e2e asserts that, not the label). Tags / Accounts / Categories / Budgets / Export moved into the sidebar under Dashboard — managers stay modals, Export opens a **month + scope** dialog (all / spending / money in) that fetches fresh and downloads `transactions_<month>_<scope>.csv`. The sidebar **collapses** to icons with the state persisted in `localStorage` (`mt_sidebar_collapsed`). A read-only, paginated **Raw notifications** page (`#/raw`, 50/page) exposes the durable capture log.
   - **SPA-style saves**: no refetch or remount after a write. `dashboard.js` keeps the loaded payload in `loaded`, merges the row(s) the API returns into `loaded.allTransactions`, re-renders from memory, and restores `window.scrollY` + the focused element id; inline pickers patch just `tr[data-tx-id] td[data-col]`. Sidebar managers dispatch `mt:data-changed`, which reloads the dashboard only while it is mounted.
   - **British spelling** throughout the English UI ("Colour", …). DB columns stay `color`; internal identifiers are unchanged.
+- **Dashboard UI polish batch (web, 2026-11-16, follow-up)** — a second owner-requested pass over the same day's dashboard batch. All web-side, no migrations.
+  - **Sidebar**: the collapse control is a hamburger **fixed to the top-left of the whole page** (outside the rail) rather than an in-rail chevron, so it doesn't move when the rail collapses. The expanded rail is tightened to **210px** (still fits "Raw notifications") and the collapsed rail to **68px**. Collapsed items carry `data-tip` hover tooltips (plus `aria-label`), and **Sign out** is now an icon that also appears in the collapsed rail. The content column is **left-aligned** with an `--app-pad` (28px) gutter — the old `max-width + margin:0 auto` opened a ~100px void whenever the rail shrank.
+  - **Header**: now a **sticky, full-bleed** bar (negative side margins cancel the app gutter, re-applied as padding). "Add from text" uses a **T** glyph; Edit mode is a **CSS-drawn animated toggle switch** (still `role="switch"` + `aria-checked`, which the e2e asserts).
+  - **Month bar**: keeps the ‹ / › arrows + a clickable month label; the native `<input type="month">` is overlaid **transparently on the label** so the standalone picker is gone but the `#month-picker` id and behaviour survive. "This month" renders **only when off the current month**, as a legible outline button (was a low-contrast disabled link).
+  - **Summary tiles**: the month-over-month deltas moved **inside** the INCOME and SPENT cards (`#month-compare` now wraps the strip; each delta is a `.tile-delta`), fixing the reversed floating order that used to sit under the tiles.
+  - **Money formatting**: `formatMoney` emits **thousand separators** and puts the **sign before the symbol** (`RM 1,568.53`, `-RM 1,181.69`) via `toLocaleString('en-MY')`.
+  - **Table**: the separate **MYR column is dropped** — foreign-currency rows show a muted **`≈ RM …`** subtext under AMOUNT instead; **Sent from + Account are merged** into one Account cell (assigned name with the source as a `title`; transfers show `A → B`; unassigned rows keep the muted source label + the inline account picker). Cells get `12px 16px` padding and amounts use `font-variant-numeric: tabular-nums`.
+  - **Recent Transactions**: the main spending table now sits under a heading with a client-side **search + category filter** bar (row show/hide only — never a re-render, so the search field keeps focus). `tr.dataset.cat` carries the category id.
+  - **Category share**: each bar uses its **category's own colour** (from the category tree, via `hexToRgba`) with a colour dot and a `%` label, instead of one flat green.
+  - **Budget manager fix**: the Add-budget category `<select>` was hidden by `d-none` on its inner `<div>` while its label stayed visible (an orphan label). The whole field group is now hidden/shown together, `syncKind()` runs on init, and "Add budget" stays disabled until the first `reload()` finishes.
+  - **CI**: `npm run format:check` (a `web.yml` step) had been failing for the last three pushes — the tree was never fully Prettier-formatted (real diffs in untouched files, not a CRLF artifact). A formatting-only commit applies Prettier across `web/`.
 
 - **`parser_templates` regression harness is load-bearing** — `supabase/scripts/replay-templates.ts` replays every stored `sample_input` against its `body_pattern` through the pure `functions/parse-notification/parser.ts` and fails on any regression ("fixed HLB, broke TnG"). It runs in `supabase.yml` CI (`deno run --allow-read --allow-env scripts/replay-templates.ts`) and is a PR-checklist item. `fixtures/templates.json` now carries **real sanitized captures for every active live template** (TnG v1–v7, CIMB v1/v3, Samsung v1, Wise v1) with the matching `sample_title` (needed because the harness passes the title through and a null title fails a title-gated template). **Caveats:** (a) the fixture file uses JS named groups + `\s` while the live PL/pgSQL templates use positional groups + `field_map` + `[[:space:]]`, so DB rows are not a drop-in — keep the two in sync; (b) deactivated CIMB v2 is deliberately omitted; (c) the live `reject_pattern` (marketing/reward guard) is a SQL-only pre-check that `parser.ts` does not implement.
 

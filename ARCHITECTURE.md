@@ -194,7 +194,7 @@ Three path-filtered GitHub Actions workflows so a web-only change doesn't trigge
 
 - **`android.yml`** — `ktlint`, `detekt`, unit tests, instrumented tests on a matrix of API levels.
 - **`supabase.yml`** — `deno fmt --check`, `deno lint`, `deno test`, then `replay-templates.ts` as a **required** check whenever a PR touches `parser_templates` or `parser.ts` — this is what makes the regression harness from §4 actually load-bearing instead of a script someone forgets to run. Migrations apply against an ephemeral Postgres service container before merge.
-- **`web.yml`** — build, ESLint, Playwright smoke run. Netlify handles deploy on merge to `main` independently.
+- **`web.yml`** — build, ESLint, `prettier --check` (§7), Playwright smoke run. Netlify handles deploy on merge to `main` independently.
 
 ## 10. Scalability notes
 
