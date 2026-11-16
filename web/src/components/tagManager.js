@@ -13,17 +13,7 @@ import {
   deleteTag,
 } from '../api/tags.js';
 import { t } from '../lib/i18n.js';
-
-const COLOR_PRESETS = [
-  '#6f42c1', // purple
-  '#0d6efd', // blue
-  '#198754', // green
-  '#fd7e14', // orange
-  '#dc3545', // red
-  '#0dcaf0', // cyan
-  '#d63384', // pink
-  '#6c757d', // gray
-];
+import { colorSwatches } from '../utils/colors.js';
 
 export function openTagManager({ onChanged = null } = {}) {
   let changed = false;
@@ -148,29 +138,24 @@ export function openTagManager({ onChanged = null } = {}) {
 
   function addTagForm(groupId) {
     const form = document.createElement('form');
-    form.className = 'd-flex gap-1 mt-1';
+    form.className = 'd-flex flex-wrap align-items-center gap-1 mt-1';
     const input = document.createElement('input');
     input.type = 'text';
-    input.className = 'form-control form-control-sm';
+    input.className = 'form-control form-control-sm w-auto flex-grow-1';
     input.placeholder = t('tags.newTagPlaceholder');
     input.maxLength = 50;
-    const color = document.createElement('select');
-    color.className = 'form-select form-select-sm w-auto';
-    color.setAttribute('aria-label', t('tags.color'));
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = t('tags.noColor');
-    color.appendChild(none);
-    for (const c of COLOR_PRESETS) {
-      const opt = document.createElement('option');
-      opt.value = c;
-      opt.style.backgroundColor = c;
-      opt.textContent = c;
-      color.appendChild(opt);
-    }
+    // Shared swatch picker — colour names, never raw hex (owner request).
+    let chosenColor = '';
+    const color = colorSwatches({
+      value: '',
+      onChange: (v) => {
+        chosenColor = v;
+      },
+      ariaLabel: t('tags.color'),
+    });
     const add = smallBtn('+', async () => {
       if (!input.value.trim()) return;
-      await createTag({ name: input.value.trim(), groupId, color: color.value || null });
+      await createTag({ name: input.value.trim(), groupId, color: chosenColor || null });
       markChanged();
       render();
     });

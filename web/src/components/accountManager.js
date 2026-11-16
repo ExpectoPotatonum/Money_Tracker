@@ -1,19 +1,24 @@
 // Account manager (Phase 3, §4.8.5). A modal for maintaining accounts and the
-// "Unassigned" flow: transactions whose rows carry no account, with one-click
-// "create account for this app" and "assign all from this app" actions.
+// "Unassigned" flow: transactions whose rows carry no account, grouped by their
+// Sent-from label, with one-click "create account for this label" and
+// "assign all from this label" actions. Reachable from the sidebar on any page,
+// so it fetches its own full history rather than relying on the dashboard.
 //
-// Balance shown per account is an estimate computed from the loaded-window
-// transactions passed by the dashboard (opening balance + Σ credits − debits
-// over rows that reference the account). Real, full-history balances are a
-// Phase 4 read; this just makes the manager useful in the meantime.
+// Balance shown per account is an estimate computed from that history
+// (opening balance + Σ credits − debits over rows that reference the account).
+// Real, full-history balances are a Phase 4 read; this just makes the manager
+// useful in the meantime.
 import { openModal } from './common.js';
 import {
   listAccounts,
   saveAccount,
   deleteAccount,
   assignPackageRows,
+  assignSourceRows,
 } from '../api/accounts.js';
+import { getAllTransactions } from '../api/transactions.js';
 import { currencyOptions } from '../utils/format.js';
+import { colorSwatches } from '../utils/colors.js';
 import { t } from '../lib/i18n.js';
 
 const ACCOUNT_TYPES = [
@@ -21,20 +26,10 @@ const ACCOUNT_TYPES = [
   'checking',
   'savings',
   'credit',
+  'debit_card',
   'ewallet',
   'virtual',
   'investment',
-];
-
-const COLOR_PRESETS = [
-  '#6f42c1', // purple
-  '#0d6efd', // blue
-  '#198754', // green
-  '#fd7e14', // orange
-  '#dc3545', // red
-  '#0dcaf0', // cyan
-  '#d63384', // pink
-  '#6c757d', // gray
 ];
 
 // First-run defaults (owner decision #6): created web-side so user_id is set
@@ -47,7 +42,7 @@ const SUGGESTED = [
   { name: 'Wise', type: 'ewallet' },
 ];
 
-export function openAccountManager({ transactions = [], onChanged = null } = {}) {
+export function openAccountManager({ onChanged = null } = {}) {
   let changed = false;
   const { dialog, body, footer } = openModal({
     title: t('accounts.managerTitle'),
@@ -76,7 +71,12 @@ export function openAccountManager({ transactions = [], onChanged = null } = {})
   });
 
   async function render() {
-    const accounts = await listAccounts();
+    // Always fetch the full history: the manager can be opened from the
+    // sidebar on any page, so it cannot rely on a dashboard-passed window.
+    const [accounts, transactions] = await Promise.all([
+      listAccounts(),
+      getAllTransactions(),
+    ]);
     body.replaceChildren();
 
     if (accounts.length === 0) {
@@ -173,20 +173,23 @@ export function openAccountManager({ transactions = [], onChanged = null } = {})
     return row;
   }
 
-  // Transactions from parsed notifications with no account, grouped by
-  // package. Each group gets "assign all → account" (also records the default
-  // map row so future captures land there) and "create account for this app".
+  // Transactions from parsed notifications with no account, grouped by their
+  // Sent-from label (falling back to package when the label is empty). Each
+  // group gets "assign all → account" (also records the label→account default
+  // so future captures land there) and "create account for this label".
   function unassignedSection(txns, accounts) {
-    const groups = new Map(); // package -> { count, label }
+    const groups = new Map(); // label/package -> { count, label, packageName }
     for (const tx of txns) {
       if (tx.account_id || tx.transfer_group_id) continue;
       if (tx.source_package === 'manual') continue; // handled in edit mode
-      const g = groups.get(tx.source_package) ?? {
+      const label = tx.source_app_label || tx.source_package;
+      const g = groups.get(label) ?? {
         count: 0,
-        label: tx.source_app_label || tx.source_package,
+        label,
+        packageName: tx.source_package,
       };
       g.count += 1;
-      groups.set(tx.source_package, g);
+      groups.set(label, g);
     }
 
     const section = document.createElement('div');
@@ -212,14 +215,18 @@ export function openAccountManager({ transactions = [], onChanged = null } = {})
       return section;
     }
 
-    for (const [pkg, g] of groups) {
+    for (const [key, g] of groups) {
       const row = document.createElement('div');
       row.className = 'd-flex align-items-center gap-2 small mb-1';
-      row.dataset.pkg = pkg;
+      // Preserve the `data-pkg` selector used by the accounts e2e (it points at
+      // the package that produced the group, even though the group key is the
+      // richer Sent-from label).
+      row.dataset.pkg = g.packageName;
+      row.dataset.label = key;
 
       const label = document.createElement('span');
       label.textContent = `${g.label} (${g.count})`;
-      label.title = pkg;
+      label.title = g.packageName ?? key;
       row.appendChild(label);
 
       const select = document.createElement('select');
@@ -247,7 +254,7 @@ export function openAccountManager({ transactions = [], onChanged = null } = {})
         }
         go.disabled = true;
         try {
-          await assignPackageRows(pkg, select.value);
+          await assignSourceRows(g.label, select.value);
           changed = true;
           render();
         } catch (err) {
@@ -266,7 +273,13 @@ export function openAccountManager({ transactions = [], onChanged = null } = {})
           prefill: { name: g.label, currency: 'MYR' },
           onSaved: async (account) => {
             try {
-              await assignPackageRows(pkg, account.id);
+              // Prefer the label map; fall back to the package map only when the
+              // group had no label at all.
+              if (g.label && g.label !== g.packageName) {
+                await assignSourceRows(g.label, account.id);
+              } else if (g.packageName) {
+                await assignPackageRows(g.packageName, account.id);
+              }
               changed = true;
               render();
             } catch (err) {
@@ -319,18 +332,23 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
   const fields = {};
 
   const field = (key, label, input) => {
+    input.className =
+      input.tagName === 'SELECT'
+        ? 'form-select form-select-sm'
+        : 'form-control form-control-sm';
+    fieldNode(key, label, input);
+  };
+
+  // Same label wrapper for non-input controls (e.g. the colour swatch group).
+  const fieldNode = (key, label, node) => {
     const grp = document.createElement('div');
     grp.className = 'mb-2';
     const l = document.createElement('label');
     l.className = 'form-label small mb-1';
     l.textContent = label;
-    input.className =
-      input.tagName === 'SELECT'
-        ? 'form-select form-select-sm'
-        : 'form-control form-control-sm';
-    grp.append(l, input);
+    grp.append(l, node);
     body.appendChild(grp);
-    fields[key] = input;
+    fields[key] = node;
   };
 
   const name = document.createElement('input');
@@ -363,19 +381,14 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
   icon.maxLength = 4;
   icon.value = account?.icon ?? '';
 
-  const colorSel = document.createElement('select');
-  const noneColor = document.createElement('option');
-  noneColor.value = '';
-  noneColor.textContent = t('tags.noColor');
-  colorSel.appendChild(noneColor);
-  for (const c of COLOR_PRESETS) {
-    const opt = document.createElement('option');
-    opt.value = c;
-    opt.textContent = c;
-    opt.selected = c === account?.color;
-    colorSel.appendChild(opt);
-  }
-  colorSel.value = account?.color ?? '';
+  let chosenColor = account?.color ?? '';
+  const colorPicker = colorSwatches({
+    value: chosenColor,
+    onChange: (v) => {
+      chosenColor = v;
+    },
+    ariaLabel: t('accounts.field.color'),
+  });
 
   const opening = document.createElement('input');
   opening.type = 'number';
@@ -399,7 +412,7 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
   field('type', t('accounts.field.type'), typeSel);
   field('currency', t('accounts.field.currency'), currencySel);
   field('icon', t('accounts.field.icon'), icon);
-  field('color', t('accounts.field.color'), colorSel);
+  fieldNode('color', t('accounts.field.color'), colorPicker);
   field('openingBalance', t('accounts.field.openingBalance'), opening);
   field('openingDate', t('accounts.field.openingDate'), openingDate);
 
@@ -414,6 +427,10 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
   body.appendChild(hiddenRow);
 
   field('sortOrder', t('accounts.field.sortOrder'), order);
+  const orderHint = document.createElement('div');
+  orderHint.className = 'form-text small mt-n1 mb-2';
+  orderHint.textContent = t('accounts.field.sortOrderHint');
+  body.appendChild(orderHint);
 
   const errMsg = document.createElement('div');
   errMsg.className = 'small text-danger d-none';
@@ -437,7 +454,7 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
         type: typeSel.value,
         currency: currencySel.value,
         icon: icon.value.trim() || null,
-        color: colorSel.value || null,
+        color: chosenColor || null,
         opening_balance: Number(opening.value || 0),
         opening_balance_date: openingDate.value || null,
         is_hidden: hidden.checked,
@@ -447,8 +464,12 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
       if (onSaved) onSaved(saved);
     } catch (err) {
       save.disabled = false;
-      errMsg.textContent = err.message;
+      // `(user_id, name)` is unique — the usual failure is adding an account
+      // whose name already exists. Say that in plain words, not the PG text.
+      errMsg.textContent =
+        err.code === '23505' ? t('accounts.duplicateName') : err.message;
       errMsg.classList.remove('d-none');
+      name.focus();
     }
   });
 

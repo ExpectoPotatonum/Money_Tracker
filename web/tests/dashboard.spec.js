@@ -505,7 +505,7 @@ test('edit mode: a cleared amount is flagged and never saved as zero', async ({ 
   // stays ON so the row is not dropped, and no PATCH carried a zero amount.
   await expect.poll(() => dialogs.length).toBe(1);
   expect(dialogs[0]).toContain('amount must be greater than zero');
-  await expect(page.locator('#edit-mode-toggle')).toHaveText('Edit mode: ON');
+  await expect(page.locator('#edit-mode-toggle')).toHaveAttribute('aria-checked', 'true');
   expect(patched.some((body) => body && body.includes('"amount":0'))).toBe(false);
 });
 

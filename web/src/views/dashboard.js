@@ -12,23 +12,25 @@ import { listAccounts, assignAccount, deleteTransfer } from '../api/accounts.js'
 import { listBudgets } from '../api/budgets.js';
 import { convert } from '../utils/fx.js';
 import { formatMoney, setCurrencySymbols } from '../utils/format.js';
+import {
+  currentMonthKey,
+  mytNow,
+  mytDateKey,
+  parseMonthKey,
+  monthLabel,
+  shiftMonthKey,
+  daysInMonth,
+  monthRows,
+} from '../utils/months.js';
 import { alertBanner } from '../components/common.js';
 import { transactionTable } from '../components/transactionTable.js';
 import { openNlModal } from '../components/nlModal.js';
-import { openTagManager } from '../components/tagManager.js';
-import { openAccountManager } from '../components/accountManager.js';
-import { openBudgetManager } from '../components/budgetManager.js';
 import { openTransferDialog } from '../components/transferDialog.js';
 import { getTagGroups, setTransactionTags } from '../api/tags.js';
-import { t, getLocale } from '../lib/i18n.js';
+import { t } from '../lib/i18n.js';
+import { icon } from '../utils/icons.js';
 
 const OFFLINE_AFTER_HOURS = 6;
-
-// Malaysia is a fixed UTC+8 with no DST, so calendar-month boundaries are a
-// plain shift from UTC. Every month-scoped number on this view (totals, trend,
-// budgets, table) uses these boundaries — a KL-pinned dashboard showing a row
-// dated 1 Nov 00:30 MYT must count it in November, not October.
-const MYT_OFFSET_MS = 8 * 3_600_000;
 
 // The selected calendar month (`YYYY-MM`). `null` means "current month, MYT" —
 // resolved on first render and kept across re-renders so an edit or a refresh
@@ -40,68 +42,18 @@ let selectedMonth = null;
 // when edit mode is toggled off — no per-row Save buttons (whatnext #5).
 let editMode = false;
 let refresh = null;
+let softRefresh = null;
+// Everything the current dashboard render was built from. Saves patch this in
+// memory and re-render from it — never a network round-trip and never a route
+// change, so the selected month and scroll position survive.
+let loaded = null;
+let currentRoot = null;
 const dirtyRows = new Map();
 let hashchangeGuardInstalled = false;
+let dataChangedListenerInstalled = false;
 
 // ------------------------------ calendar-month helpers (Malaysia time)
-
-function mytNow() {
-  return new Date(Date.now() + MYT_OFFSET_MS);
-}
-
-// The current calendar month in Malaysia, as `YYYY-MM`.
-function currentMonthKey() {
-  const d = mytNow();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-// ISO timestamp -> the MYT calendar date it belongs to (`YYYY-MM-DD`).
-function mytDateKey(iso) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Date(d.getTime() + MYT_OFFSET_MS).toISOString().slice(0, 10);
-}
-
-function txMonthKey(iso) {
-  const day = mytDateKey(iso);
-  return day ? day.slice(0, 7) : null;
-}
-
-function parseMonthKey(key) {
-  const [year, month] = key.split('-').map(Number);
-  return { year, month: month - 1 };
-}
-
-function monthLabel(key) {
-  const { year, month } = parseMonthKey(key);
-  // Intl is already used for the KL-pinned dates in utils/format.js; UTC keeps
-  // the label from drifting by a day in a negative-offset browser.
-  return new Date(Date.UTC(year, month, 1)).toLocaleDateString(getLocale(), {
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-}
-
-function shiftMonthKey(key, delta) {
-  const { year, month } = parseMonthKey(key);
-  const d = new Date(Date.UTC(year, month + delta, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-function daysInMonth(key) {
-  const { year, month } = parseMonthKey(key);
-  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-}
-
-// Rows belonging to one MYT calendar month, newest first (getAllTransactions
-// is ascending, the tables have always rendered descending).
-function monthRows(rows, key) {
-  return rows
-    .filter((r) => txMonthKey(r.transaction_date) === key)
-    .sort((a, b) => new Date(b.transaction_date) - new Date(a.transaction_date));
-}
+// Month boundaries live in utils/months.js — shared with the CSV export dialog.
 
 // MYR conversion + income/expense totals for one set of rows. The Map is keyed
 // by transaction id so the table/CSV/share strip reuse the same conversions.
@@ -166,7 +118,26 @@ function buildTrend(rows, myrTotals, key) {
 
 export async function renderDashboard(root) {
   root.replaceChildren();
-  refresh = () => renderDashboard(root);
+  currentRoot = root;
+
+  // Targeted updates: rebuild from the in-memory payload (no network) while
+  // keeping the document scroll position and focus where they were. Inline
+  // saves patch `loaded` first, then call this.
+  softRefresh = async () => {
+    if (!loaded) return;
+    const scroll = window.scrollY;
+    const active = document.activeElement;
+    const focusId = active && active.id ? active.id : null;
+    await renderLoaded(root, loaded);
+    window.scrollTo(0, scroll);
+    if (focusId) document.getElementById(focusId)?.focus();
+  };
+  // Full reload — only for create actions and sidebar managers, which may have
+  // changed rows the dashboard doesn't hold (bulk account backfills, categories,
+  // budgets).
+  refresh = async () => {
+    await loadDashboard(root);
+  };
 
   // If the user navigates away with edit mode on, don't silently drop edits —
   // flush them before the next view swaps in.
@@ -176,7 +147,19 @@ export async function renderDashboard(root) {
       if (editMode) await flushDirty();
     });
   }
+  // Sidebar managers (tags/accounts/categories/budgets) dispatch this after a
+  // change. Re-read only when THIS dashboard is the mounted view.
+  if (!dataChangedListenerInstalled) {
+    dataChangedListenerInstalled = true;
+    window.addEventListener('mt:data-changed', () => {
+      if (loaded && currentRoot?.isConnected) refresh();
+    });
+  }
 
+  await loadDashboard(root);
+}
+
+async function loadDashboard(root) {
   const [
     allTransactions,
     categoryNames,
@@ -198,7 +181,7 @@ export async function renderDashboard(root) {
   ]);
   setCurrencySymbols(currencies);
 
-  await renderLoaded(root, {
+  loaded = {
     allTransactions,
     categoryNames,
     heartbeat,
@@ -206,8 +189,10 @@ export async function renderDashboard(root) {
     tagGroups,
     accounts,
     budgets,
-  });
+  };
+  await renderLoaded(root, loaded);
 }
+
 
 // Re-renders the view from an ALREADY loaded payload. Month navigation goes
 // through here, so switching months never re-fetches the whole history.
@@ -314,19 +299,30 @@ async function renderLoaded(root, data) {
   const h = document.createElement('h1');
   h.className = 'h3 mb-0';
   h.textContent = t('dash.title');
-  const addBtn = document.createElement('button');
-  addBtn.type = 'button';
-  addBtn.id = 'nl-add-btn';
-  addBtn.className = 'btn btn-sm btn-outline-secondary';
-  addBtn.textContent = t('nl.title');
-  addBtn.addEventListener('click', () =>
-    openNlModal({ categoryNames, accounts, onSaved: refresh }),
-  );
+  const addBtn = iconButton({
+    id: 'nl-add-btn',
+    iconName: 'text',
+    label: t('nl.title'),
+    onClick: () => openNlModal({ categoryNames, accounts, onSaved: (saved) => {
+      if (saved) mergeRows([saved]);
+      softRefresh();
+    } }),
+  });
   const editBtn = document.createElement('button');
   editBtn.type = 'button';
   editBtn.id = 'edit-mode-toggle';
-  editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
-  editBtn.textContent = editMode ? t('dash.editModeOn') : t('dash.editMode');
+  editBtn.className = 'btn btn-sm btn-outline-primary edit-switch';
+  editBtn.setAttribute('role', 'switch');
+  editBtn.setAttribute('aria-checked', String(editMode));
+  editBtn.setAttribute('aria-label', t('dash.editMode'));
+  editBtn.title = t('dash.editMode');
+  editBtn.appendChild(icon('toggle', { size: 18 }));
+  const syncEditBtn = () => {
+    editBtn.setAttribute('aria-checked', String(editMode));
+    editBtn.className = `btn btn-sm edit-switch ${editMode ? 'btn-primary is-on' : 'btn-outline-primary'}`;
+    editBtn.setAttribute('aria-label', editMode ? t('dash.editModeOn') : t('dash.editMode'));
+    editBtn.title = editBtn.getAttribute('aria-label');
+  };
   editBtn.addEventListener('click', async () => {
     if (editMode) {
       // Leaving edit mode persists every pending change; on failure stay in
@@ -335,29 +331,11 @@ async function renderLoaded(root, data) {
     } else {
       editMode = true;
     }
-    editBtn.textContent = editMode ? t('dash.editModeOn') : t('dash.editMode');
-    editBtn.className = `btn btn-sm ${editMode ? 'btn-primary' : 'btn-outline-primary'}`;
-    refresh();
+    syncEditBtn();
+    softRefresh();
   });
-  left.append(
-    h,
-    addBtn,
-    transferBtn(accounts),
-    editBtn,
-    tagsManageBtn(),
-    accountsManageBtn(accounts, allTransactions),
-    budgetsManageBtn(),
-    csvExportBtn(
-      debits,
-      credits,
-      transfers,
-      stats.myrTotals,
-      categoryNames,
-      accountNames,
-      transferPairs,
-      month,
-    ),
-  );
+  syncEditBtn();
+  left.append(h, addBtn, transferBtn(accounts), editBtn);
   header.append(left, monthBar(month, rerender));
   root.appendChild(header);
 
@@ -429,7 +407,10 @@ async function renderLoaded(root, data) {
     },
     onDelete: async (id) => {
       await deleteTransaction(id);
-      refresh();
+      // Saves are targeted: drop the row from the in-memory payload and
+      // rebuild from it. No refetch, no route change, month stays put.
+      loaded.allTransactions = loaded.allTransactions.filter((r) => r.id !== id);
+      await softRefresh();
     },
     // Transfers delete BOTH halves in one request (app-enforced pairing) —
     // a per-half delete would orphan the other half. Confirmed separately
@@ -437,30 +418,40 @@ async function renderLoaded(root, data) {
     onDeleteTransfer: async (groupId) => {
       if (!window.confirm(t('transfer.deleteConfirm'))) return;
       await deleteTransfer(groupId);
-      refresh();
+      loaded.allTransactions = loaded.allTransactions.filter(
+        (r) => r.transfer_group_id !== groupId,
+      );
+      await softRefresh();
     },
     onToggleRecurring: async (id, value) => {
       await updateTransaction(id, { is_recurring: value });
-      refresh();
+      patchRow(id, { is_recurring: value });
+      await softRefresh();
     },
     // Blank-category rows show an inline picker (read-only mode); a choice
-    // PATCHes that row immediately, like the recurring toggle.
+    // PATCHes that row immediately. The cell updates in place — totals don't
+    // depend on category, so there is nothing else to recompute.
     onCategorize: async (id, categoryId) => {
       await updateTransaction(id, { category_id: categoryId });
-      refresh();
+      patchRow(id, { category_id: categoryId });
+      setCellText(id, 'category', categoryNames.get(categoryId) ?? '');
     },
     // Blank-account rows show an inline picker (read-only mode); a choice
-    // PATCHes that row immediately, same pattern.
+    // PATCHes that row immediately, same targeted pattern.
     onAssignAccount: async (id, accountId) => {
       await assignAccount(id, accountId);
-      refresh();
+      patchRow(id, { account_id: accountId });
+      setCellText(id, 'account', accountNames.get(accountId) ?? '');
     },
     // Tag toggles replace the row's tag set in the M2M table immediately —
     // tags are a separate table, so they can't ride the batched transactions
-    // PATCH that flushes on edit-mode toggle-off.
+    // PATCH that flushes on edit-mode toggle-off. Mirror the new set into the
+    // in-memory row so the rebuild shows it without refetching.
     onSetTags: async (id, tagIds) => {
       await setTransactionTags(id, tagIds);
-      refresh();
+      const chosen = new Set(tagIds);
+      patchRow(id, { tags: allTags.filter((tag) => chosen.has(tag.id)) });
+      await softRefresh();
     },
   };
   root.appendChild(transactionTable({ transactions: debits, ...tableProps }));
@@ -500,6 +491,11 @@ async function flushDirty() {
       dirtyRows.set(pending[i][0], pending[i][1]);
       const reason = r.reason?.message ?? r.reason;
       failures.push(`${pending[i][0].slice(0, 8)}: ${reason}`);
+    } else {
+      // Keep the in-memory payload in step with what was just PATCHed, so the
+      // read-mode rebuild after toggle-off shows the new values without a
+      // second fetch.
+      patchRow(pending[i][0], pending[i][1]);
     }
   });
 
@@ -512,95 +508,60 @@ async function flushDirty() {
   return failures.length === 0;
 }
 
-// Build the CSV export button. Named function so the column name for the
-// recurring flag stays in sync with the actual data. Exports every row of the
-// SELECTED month (debits, credits, and transfer halves — nothing hidden);
-// transfer rows get Direction "Transfer" and the Account shows the pair "A → B".
-function csvExportBtn(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs, month) {
+// In-memory mutation helpers — the backing store for targeted updates.
+function patchRow(id, patch) {
+  const row = loaded?.allTransactions.find((r) => r.id === id);
+  if (row) Object.assign(row, patch);
+}
+
+function mergeRows(rows) {
+  if (!loaded || !Array.isArray(rows)) return;
+  for (const row of rows) {
+    if (!row) continue;
+    const existing = loaded.allTransactions.findIndex((r) => r.id === row.id);
+    if (existing >= 0) loaded.allTransactions[existing] = row;
+    else loaded.allTransactions.push(row);
+  }
+}
+
+// Replace one cell's text in place (used by the inline pickers, where a full
+// rebuild would discard the very dropdown the user just used).
+function setCellText(id, col, text) {
+  const tr = currentRoot?.querySelector(`tr[data-tx-id="${id}"]`);
+  const td = tr?.querySelector(`td[data-col="${col}"]`);
+  if (td) td.textContent = text;
+}
+
+// Icon-only header action with an accessible name and a tooltip.
+function iconButton({ id, iconName, label, onClick }) {
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'btn btn-sm btn-outline-secondary';
-  btn.id = 'csv-export-btn';
-  btn.textContent = t('dash.export');
-  btn.addEventListener('click', () =>
-    downloadCsv(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs, month),
-  );
+  btn.id = id;
+  btn.className = 'btn btn-sm btn-outline-secondary icon-btn';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.appendChild(icon(iconName, { size: 18 }));
+  btn.addEventListener('click', onClick);
   return btn;
 }
 
-// "Move money" opens the transfer dialog; on save, pending edits flush first
-// (if edit mode is on) so a re-render never drops them.
+// "Move money" opens the transfer dialog. New halves are merged into the
+// in-memory payload so the tables refresh without a refetch.
 function transferBtn(accountList) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'transfer-add-btn';
-  btn.className = 'btn btn-sm btn-outline-secondary';
-  btn.textContent = t('col.transfer');
+  btn.className = 'btn btn-sm btn-outline-secondary icon-btn';
+  btn.title = t('col.transfer');
+  btn.setAttribute('aria-label', t('col.transfer'));
+  btn.appendChild(icon('transfer', { size: 18 }));
   btn.addEventListener('click', () =>
     openTransferDialog({
       accounts: accountList,
-      onSaved: async () => {
+      onSaved: async (halves) => {
         if (editMode) await flushDirty();
-        refresh();
-      },
-    }),
-  );
-  return btn;
-}
-
-// "Manage tags" opens the tag manager modal; on close, pending edits flush
-// first (if edit mode is on) so a re-render never drops them.
-function tagsManageBtn() {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.id = 'tags-manage-btn';
-  btn.className = 'btn btn-sm btn-outline-secondary';
-  btn.textContent = t('tags.manage');
-  btn.addEventListener('click', () =>
-    openTagManager({
-      onChanged: async () => {
-        if (editMode) await flushDirty();
-        refresh();
-      },
-    }),
-  );
-  return btn;
-}
-
-// "Accounts" opens the accounts manager (list, add/edit, and the Unassigned
-// assign flow). The loaded-window transactions are passed along so the manager
-// can show per-account balance estimates without another fetch.
-function accountsManageBtn(accountList, transactions) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.id = 'accounts-manage-btn';
-  btn.className = 'btn btn-sm btn-outline-secondary';
-  btn.textContent = t('accounts.manage');
-  btn.addEventListener('click', () =>
-    openAccountManager({
-      transactions,
-      onChanged: async () => {
-        if (editMode) await flushDirty();
-        refresh();
-      },
-    }),
-  );
-  return btn;
-}
-
-// "Budgets" opens the budget manager (overall + per-category targets). The
-// spend-vs-budget bars render from the same table the manager edits.
-function budgetsManageBtn() {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.id = 'budgets-manage-btn';
-  btn.className = 'btn btn-sm btn-outline-secondary';
-  btn.textContent = t('budgets.manage');
-  btn.addEventListener('click', () =>
-    openBudgetManager({
-      onChanged: async () => {
-        if (editMode) await flushDirty();
-        refresh();
+        mergeRows(halves);
+        softRefresh();
       },
     }),
   );
@@ -706,61 +667,6 @@ async function computeBudgetSpend(budgets, tree, txns) {
       spent: Math.round(spent * 100) / 100,
     };
   });
-}
-
-function downloadCsv(debits, credits, transfers, myrTotals, categoryNames, accountNames, transferPairs, month) {
-  const rows = [...debits, ...credits, ...transfers];
-  const header = [
-    'Date',
-    'Receiver',
-    'Category',
-    'Amount',
-    'Currency',
-    'MYR',
-    'Direction',
-    'Sent from',
-    'Account',
-    'Recurring',
-    'Tags',
-    'Notes',
-  ];
-  const body = rows.map((t) => {
-    const myr = myrTotals.get(t.id);
-    const isTransfer = Boolean(t.transfer_group_id);
-    const pair = transferPairs.get(t.transfer_group_id) ?? {};
-    const account = isTransfer
-      ? `${accountNames.get(pair.source) ?? '?'} → ${accountNames.get(pair.dest) ?? '?'}`
-      : accountNames.get(t.account_id) ?? '';
-    return [
-      t.transaction_date,
-      t.merchant_raw ?? '',
-      (t.category_id && categoryNames.get(t.category_id)) || '',
-      t.amount,
-      t.currency,
-      myr !== null && myr !== undefined ? myr : '',
-      isTransfer ? 'Transfer' : t.direction,
-      t.source_app_label ?? '',
-      account,
-      t.is_recurring ? 'yes' : '',
-      (t.tags ?? []).map((tag) => tag.name).join('; '),
-      t.notes ?? '',
-    ];
-  });
-  const csv = [header, ...body].map((r) => r.map(escapeCsv).join(',')).join('\n');
-  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `transactions_${month ?? new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function escapeCsv(value) {
-  const s = String(value ?? '');
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 // Part 6 — summary tile strip: month income / expense (`#total-myr`) / net.

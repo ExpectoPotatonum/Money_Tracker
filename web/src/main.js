@@ -5,12 +5,23 @@ import { renderAuthGate } from './views/authGate.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderReports } from './views/reports.js';
 import { renderReviewInbox } from './views/reviewInbox.js';
+import { renderRawNotifications } from './views/rawNotifications.js';
 import { installLogger, logApiError } from './lib/logger.js';
 import { openSettings } from './components/settingsDialog.js';
+import { openTagManager } from './components/tagManager.js';
+import { openAccountManager } from './components/accountManager.js';
+import { openCategoryManager } from './components/categoryManager.js';
+import { openBudgetManager } from './components/budgetManager.js';
+import { openExportDialog } from './components/exportDialog.js';
+import { icon } from './utils/icons.js';
 import { t } from './lib/i18n.js';
 import { applyTheme, cycleTheme } from './lib/theme.js';
 
 const app = document.getElementById('app');
+
+// Sidebar collapsed state persists across reloads/routes. The toggle only flips
+// this flag; CSS does the actual layout (labels hide, icons remain).
+const SIDEBAR_KEY = 'mt_sidebar_collapsed';
 
 installLogger();
 
@@ -23,10 +34,34 @@ function currentView() {
   const h = window.location.hash;
   if (h === '#/review') return 'review';
   if (h === '#/reports') return 'reports';
+  if (h === '#/raw') return 'raw';
   return 'dashboard';
 }
 
-function renderSidebar() {
+// Managers live in the sidebar now; when one reports a change the dashboard
+// (if mounted) soft-refreshes in place instead of remounting the view.
+function notifyDataChanged() {
+  window.dispatchEvent(new CustomEvent('mt:data-changed'));
+}
+
+function sidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setSidebarCollapsed(shell, collapsed) {
+  shell.classList.toggle('sidebar-collapsed', collapsed);
+  try {
+    localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+  } catch {
+    // localStorage unavailable — collapse still works for this page.
+  }
+}
+
+function renderSidebar(shell) {
   const nav = document.createElement('nav');
   nav.className = 'app-sidebar';
 
@@ -35,30 +70,91 @@ function renderSidebar() {
   brand.className = 'sidebar-brand';
   brand.href = '#/';
   const brandTitle = document.createElement('span');
-  brandTitle.className = 'sidebar-brand-title';
+  brandTitle.className = 'sidebar-brand-title sidebar-label';
   brandTitle.textContent = t('app.title');
   brand.appendChild(brandTitle);
   nav.appendChild(brand);
+
+  const collapsedNow = shell.classList.contains('sidebar-collapsed');
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.id = 'sidebar-collapse-btn';
+  toggle.className = 'sidebar-collapse-btn';
+  toggle.setAttribute('aria-expanded', String(!collapsedNow));
+  toggle.title = t(collapsedNow ? 'nav.expand' : 'nav.collapse');
+  toggle.appendChild(icon(collapsedNow ? 'chevronRight' : 'chevronLeft', { size: 16 }));
+  toggle.addEventListener('click', () => {
+    const next = !shell.classList.contains('sidebar-collapsed');
+    setSidebarCollapsed(shell, next);
+    toggle.setAttribute('aria-expanded', String(!next));
+    toggle.title = t(next ? 'nav.expand' : 'nav.collapse');
+    toggle.replaceChildren(icon(next ? 'chevronRight' : 'chevronLeft', { size: 16 }));
+  });
+  nav.appendChild(toggle);
 
   // Primary links. Keep the .nav-link class so the e2e `nav .nav-link.active`
   // assertion (reports.spec) keeps matching — the sidebar IS the nav element.
   const links = document.createElement('div');
   links.className = 'sidebar-links';
 
-  const mkLink = (href, label, view) => {
+  const navItem = (href, label, view, iconName) => {
     const a = document.createElement('a');
     a.href = href;
     a.className = `nav-link ${currentView() === view ? 'active' : ''}`;
-    a.textContent = label;
+    a.title = label;
+    a.appendChild(icon(iconName, { size: 18 }));
+    const span = document.createElement('span');
+    span.className = 'sidebar-label';
+    span.textContent = label;
+    a.appendChild(span);
     return a;
   };
 
   links.append(
-    mkLink('#/', t('nav.dashboard'), 'dashboard'),
-    mkLink('#/review', t('nav.review'), 'review'),
-    mkLink('#/reports', t('nav.reports'), 'reports'),
+    navItem('#/', t('nav.dashboard'), 'dashboard', 'dashboard'),
+    navItem('#/review', t('nav.review'), 'review', 'review'),
+    navItem('#/reports', t('nav.reports'), 'reports', 'reports'),
+    navItem('#/raw', t('nav.raw'), 'raw', 'raw'),
   );
   nav.appendChild(links);
+
+  // Dashboard tools — moved out of the dashboard header. Each opens the same
+  // modal it always did; `onChanged` triggers a soft refresh of the mounted
+  // dashboard rather than a full view remount (SPA-like, preserves scroll).
+  const sub = document.createElement('div');
+  sub.className = 'sidebar-sub';
+
+  const subItem = (id, iconName, label, onClick) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = id;
+    btn.className = 'sidebar-btn sidebar-sub-btn';
+    btn.title = label;
+    btn.appendChild(icon(iconName, { size: 16 }));
+    const span = document.createElement('span');
+    span.className = 'sidebar-label';
+    span.textContent = label;
+    btn.appendChild(span);
+    btn.addEventListener('click', onClick);
+    return btn;
+  };
+
+  sub.append(
+    subItem('tags-manage-btn', 'tags', t('tags.manage'), () =>
+      openTagManager({ onChanged: notifyDataChanged }),
+    ),
+    subItem('accounts-manage-btn', 'accounts', t('accounts.manage'), () =>
+      openAccountManager({ onChanged: notifyDataChanged }),
+    ),
+    subItem('categories-manage-btn', 'categories', t('categories.manage'), () =>
+      openCategoryManager({ onChanged: notifyDataChanged }),
+    ),
+    subItem('budgets-manage-btn', 'budgets', t('budgets.manage'), () =>
+      openBudgetManager({ onChanged: notifyDataChanged }),
+    ),
+    subItem('csv-export-btn', 'export', t('nav.export'), () => openExportDialog()),
+  );
+  nav.appendChild(sub);
 
   // Footer: theme, settings, sign out. Ids move with them so the e2e clicks
   // (#nav-theme-btn, #nav-settings-btn) keep working from the new location.
@@ -73,26 +169,41 @@ function renderSidebar() {
   themeBtn.className = 'sidebar-btn';
   themeBtn.title = t('nav.theme.cycle');
   themeBtn.setAttribute('aria-label', t('nav.theme'));
+  const themeGlyph = document.createElement('span');
+  themeGlyph.className = 'sidebar-glyph';
+  const themeLabel = document.createElement('span');
+  themeLabel.className = 'sidebar-label';
+  themeLabel.textContent = t('nav.theme');
   const syncThemeIcon = () => {
-    themeBtn.textContent = document.documentElement.dataset.bsTheme === 'dark' ? '🌙' : '☀️';
+    themeGlyph.textContent = document.documentElement.dataset.bsTheme === 'dark' ? '🌙' : '☀️';
   };
   themeBtn.addEventListener('click', () => {
     cycleTheme();
     syncThemeIcon();
   });
   syncThemeIcon();
+  themeBtn.append(themeGlyph, themeLabel);
 
   const settingsBtn = document.createElement('button');
   settingsBtn.type = 'button';
   settingsBtn.id = 'nav-settings-btn';
   settingsBtn.className = 'sidebar-btn';
-  settingsBtn.textContent = `${t('nav.settings')} ⚙`;
+  settingsBtn.title = t('nav.settings');
+  settingsBtn.appendChild(icon('settings', { size: 18 }));
+  const settingsLabel = document.createElement('span');
+  settingsLabel.className = 'sidebar-label';
+  settingsLabel.textContent = t('nav.settings');
+  settingsBtn.appendChild(settingsLabel);
   settingsBtn.addEventListener('click', () => openSettings());
 
   const signOutBtn = document.createElement('button');
   signOutBtn.type = 'button';
   signOutBtn.className = 'sidebar-btn';
-  signOutBtn.textContent = t('nav.signOut');
+  signOutBtn.title = t('nav.signOut');
+  const signOutLabel = document.createElement('span');
+  signOutLabel.className = 'sidebar-label';
+  signOutLabel.textContent = t('nav.signOut');
+  signOutBtn.appendChild(signOutLabel);
   signOutBtn.addEventListener('click', () => signOut().catch(() => {}));
 
   footer.append(themeBtn, settingsBtn, signOutBtn);
@@ -111,7 +222,8 @@ async function render() {
   viewRoot.className = 'app-view';
   const shell = document.createElement('div');
   shell.className = 'app-shell';
-  shell.append(renderSidebar(), viewRoot);
+  shell.classList.toggle('sidebar-collapsed', sidebarCollapsed());
+  shell.append(renderSidebar(shell), viewRoot);
   app.replaceChildren(shell);
 
   try {
@@ -120,6 +232,8 @@ async function render() {
       await renderReviewInbox(viewRoot);
     } else if (view === 'reports') {
       await renderReports(viewRoot);
+    } else if (view === 'raw') {
+      await renderRawNotifications(viewRoot);
     } else {
       await renderDashboard(viewRoot);
     }

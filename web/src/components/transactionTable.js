@@ -89,6 +89,7 @@ export function transactionTable({
 
   for (const t of transactions) {
     const tr = document.createElement('tr');
+    tr.dataset.txId = t.id;
     const isTransfer = Boolean(t.transfer_group_id);
 
     if (isTransfer) {
@@ -191,6 +192,7 @@ export function transactionTable({
 
   function categoryCell(t, cats) {
     const td = document.createElement('td');
+    td.dataset.col = 'category';
     // Halves carry no category (owner decision #4) and never show a picker.
     if (t.transfer_group_id) {
       td.textContent = '—';
@@ -274,6 +276,7 @@ export function transactionTable({
   // PATCHes immediately via onAssignAccount (mirror of the category picker).
   function accountCell(t, accounts, accountNames, transferPairs) {
     const td = document.createElement('td');
+    td.dataset.col = 'account';
     if (t.transfer_group_id) {
       const pair = transferPairs.get(t.transfer_group_id) ?? {};
       const a = accountNames.get(pair.source) ?? '?';

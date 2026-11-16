@@ -3,6 +3,14 @@
 // scoped under RLS — these run as the signed-in user (AGENTS §17 conventions).
 import { supabase } from '../lib/supabaseClient.js';
 
+// Preserve Postgres' error code so callers can turn 23505 (unique violation)
+// into a friendly "that name already exists" message.
+function asError(error) {
+  const e = new Error(error.message);
+  if (error.code) e.code = error.code;
+  return e;
+}
+
 // Read-only-friendly: a missing table (migration not applied yet) degrades to
 // an empty list rather than breaking the dashboard render (like currencies).
 export async function listAccounts() {
@@ -30,11 +38,11 @@ export async function saveAccount(account) {
   };
   if (account.id) {
     const { error } = await supabase.from('accounts').update(clean).eq('id', account.id);
-    if (error) throw new Error(error.message);
+    if (error) throw asError(error);
     return account;
   }
   const { data, error } = await supabase.from('accounts').insert(clean).select('*').single();
-  if (error) throw new Error(error.message);
+  if (error) throw asError(error);
   return data;
 }
 
@@ -49,10 +57,13 @@ export async function deleteAccount(id) {
   if ((count ?? 0) > 0) {
     throw new Error(`still ${count} transaction(s) on this account`);
   }
-  // Map rows reference the account too (FK). Clear them first.
+  // Map rows reference the account too (FK). Clear them first. Newer projects
+  // also have source_account_map (202611160002); a missing table is ignored so
+  // this keeps working before that migration is applied.
   await supabase.from('package_account_map').delete().eq('account_id', id);
+  await supabase.from('source_account_map').delete().eq('account_id', id);
   const { error } = await supabase.from('accounts').delete().eq('id', id);
-  if (error) throw new Error(error.message);
+  if (error) throw asError(error);
 }
 
 // Patch the account on a single transaction (the "-- Pick…" read-only flow and
@@ -83,6 +94,32 @@ export async function assignPackageRows(packageName, accountId) {
     .from('transactions')
     .update({ account_id: accountId })
     .eq('source_package', packageName)
+    .is('account_id', null)
+    .is('transfer_group_id', null);
+  if (error) throw new Error(error.message);
+}
+
+// "Assign all from <label> → <account>": the label-level sibling of
+// assignPackageRows (owner decision 2026-11-16). Records the default in
+// source_account_map — which parse_raw_notification resolves BEFORE the package
+// map — and backfills every existing row carrying that Sent-from label that has
+// no account yet. Never touches transfer halves or rows already assigned.
+export async function assignSourceRows(sourceAppLabel, accountId) {
+  const label = String(sourceAppLabel ?? '').trim();
+  if (!label) throw new Error('source label is required');
+
+  const { error: mapErr } = await supabase
+    .from('source_account_map')
+    .upsert(
+      { source_app_label: label, account_id: accountId },
+      { onConflict: 'user_id,source_app_label' },
+    );
+  if (mapErr) throw new Error(mapErr.message);
+
+  const { error } = await supabase
+    .from('transactions')
+    .update({ account_id: accountId })
+    .eq('source_app_label', label)
     .is('account_id', null)
     .is('transfer_group_id', null);
   if (error) throw new Error(error.message);
@@ -139,7 +176,7 @@ export async function insertTransfer({
       source_app_label: null,
     },
   ];
-  const { data, error } = await supabase.from('transactions').insert(halves).select('id');
+  const { data, error } = await supabase.from('transactions').insert(halves).select('*');
   if (error) throw new Error(error.message);
   return data ?? [];
 }

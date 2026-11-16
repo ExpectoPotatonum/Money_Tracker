@@ -341,11 +341,11 @@ export function openNlModal({ categoryNames, accounts = [], onSaved = null }) {
       };
       save.disabled = true;
       try {
-        await insertTransaction(row);
+        const saved = await insertTransaction(row);
         status.className = 'small text-success mt-2';
         status.textContent = t('nl.saved');
         body.appendChild(status);
-        if (onSaved) onSaved();
+        if (onSaved) onSaved(saved);
         setTimeout(() => dialog.close(), 700);
       } catch (err) {
         save.disabled = false;

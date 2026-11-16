@@ -1,9 +1,10 @@
 import { supabase } from '../lib/supabaseClient.js';
+import { categoryNameMap, sortCategoryRows } from '../utils/categories.js';
 
 // The row shape everything downstream expects (dashboard, CSV, reports).
 // Kept in one place so the nested M2M embed stays consistent.
 const TXN_SELECT =
-  'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_app_label, status, notes, is_recurring, account_id, transfer_group_id, transaction_tags ( tag_id, tags ( id, name, color ) )';
+  'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_package, source_app_label, status, notes, is_recurring, account_id, transfer_group_id, transaction_tags ( tag_id, tags ( id, name, color ) )';
 
 export async function getTransactions({ withinDays = 30, limit = 100, status = null, since = null } = {}) {
   let query = supabase
@@ -48,7 +49,7 @@ export async function getAllTransactions() {
 
 // Flatten the M2M embed (transaction_tags -> tags) into a plain `tags` array on
 // each row: [{ id, name, color }]. Keeps component code free of the join shape.
-function normalizeTx(t) {
+export function normalizeTx(t) {
   const { transaction_tags: links, ...rest } = t;
   const tags = (links ?? [])
     .map((l) => l.tags)
@@ -57,11 +58,15 @@ function normalizeTx(t) {
   return { ...rest, tags };
 }
 
+// Category dropdowns are alphabetical with the catch-all "Other" pinned last
+// (utils/categories.js) — a plain Map preserves that insertion order.
 export async function getCategories() {
-  const { data, error } = await supabase.from('categories').select('id, name');
+  const { data, error } = await supabase
+    .from('categories')
+    .select('id, name')
+    .order('name', { ascending: true });
   if (error) throw new Error(error.message);
-  const rows = Array.isArray(data) ? data : [];
-  return new Map(rows.map((c) => [c.id, c.name]));
+  return categoryNameMap(Array.isArray(data) ? data : []);
 }
 
 // Full category rows (two-tier: parent_id) for reports roll-ups and budget
@@ -72,7 +77,7 @@ export async function getCategoryTree() {
     .select('id, name, parent_id, icon, color')
     .order('name', { ascending: true });
   if (error) throw new Error(error.message);
-  return Array.isArray(data) ? data : [];
+  return sortCategoryRows(Array.isArray(data) ? data : []);
 }
 
 // Manual edit/delete (agents.md: parsing gets things wrong, e.g. an e-wallet
@@ -105,9 +110,13 @@ function assertPositiveAmount(row) {
 // check). The authenticated role has INSERT under the owner_only RLS policy.
 export async function insertTransaction(row) {
   assertPositiveAmount(row);
-  const { data, error } = await supabase.from('transactions').insert(row).select('id').single();
+  const { data, error } = await supabase
+    .from('transactions')
+    .insert(row)
+    .select(TXN_SELECT)
+    .single();
   if (error) throw new Error(error.message);
-  return data;
+  return normalizeTx(data);
 }
 
 export async function deleteTransaction(id) {

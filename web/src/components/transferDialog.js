@@ -191,7 +191,7 @@ export function openTransferDialog({ accounts = [], onSaved = null } = {}) {
 
     save.disabled = true;
     try {
-      await insertTransfer({
+      const halves = await insertTransfer({
         sourceAccountId: source.id,
         destAccountId: dest.id,
         sourceAmount,
@@ -203,7 +203,7 @@ export function openTransferDialog({ accounts = [], onSaved = null } = {}) {
       });
       status.className = 'small text-success mt-2';
       status.textContent = t('transfer.saved');
-      if (onSaved) onSaved();
+      if (onSaved) onSaved(halves);
       setTimeout(() => dialog.close(), 700);
     } catch (err) {
       save.disabled = false;
