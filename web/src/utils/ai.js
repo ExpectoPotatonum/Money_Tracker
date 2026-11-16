@@ -71,9 +71,7 @@ export async function parseTransactionText(userText, categoryNames) {
   const res = await callLlm(prompt);
   if (!res.ok) return { draft: null, error: { code: 'llm', ...res } };
   const draft = normalize(extractJsonObject(res.text), categoryNames);
-  return draft
-    ? { draft, error: null }
-    : { draft: null, error: { code: 'notransaction' } };
+  return draft ? { draft, error: null } : { draft: null, error: { code: 'notransaction' } };
 }
 
 // Review-inbox escalation (Phase C): a failed/needs_review raw_notifications
@@ -83,7 +81,5 @@ export async function parseNotificationTransaction(row, categoryNames) {
   const res = await callLlm(prompt);
   if (!res.ok) return { draft: null, error: { code: 'llm', ...res } };
   const draft = normalize(extractJsonObject(res.text), categoryNames);
-  return draft
-    ? { draft, error: null }
-    : { draft: null, error: { code: 'notransaction' } };
+  return draft ? { draft, error: null } : { draft: null, error: { code: 'notransaction' } };
 }

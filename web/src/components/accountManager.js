@@ -73,10 +73,7 @@ export function openAccountManager({ onChanged = null } = {}) {
   async function render() {
     // Always fetch the full history: the manager can be opened from the
     // sidebar on any page, so it cannot rely on a dashboard-passed window.
-    const [accounts, transactions] = await Promise.all([
-      listAccounts(),
-      getAllTransactions(),
-    ]);
+    const [accounts, transactions] = await Promise.all([listAccounts(), getAllTransactions()]);
     body.replaceChildren();
 
     if (accounts.length === 0) {
@@ -326,16 +323,16 @@ function formatAmount(value, currency) {
 // Add/edit account form (second <dialog> stacked over the manager).
 function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) {
   const isEdit = Boolean(account);
-  const { dialog, body, footer } = openModal({ title: isEdit ? t('accounts.edit') : t('accounts.add') });
+  const { dialog, body, footer } = openModal({
+    title: isEdit ? t('accounts.edit') : t('accounts.add'),
+  });
   body.className = 'modal-body';
 
   const fields = {};
 
   const field = (key, label, input) => {
     input.className =
-      input.tagName === 'SELECT'
-        ? 'form-select form-select-sm'
-        : 'form-control form-control-sm';
+      input.tagName === 'SELECT' ? 'form-select form-select-sm' : 'form-control form-control-sm';
     fieldNode(key, label, input);
   };
 
@@ -354,7 +351,7 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
   const name = document.createElement('input');
   name.type = 'text';
   name.required = true;
-  name.value = (account?.name ?? prefill.name ?? '');
+  name.value = account?.name ?? prefill.name ?? '';
 
   const typeSel = document.createElement('select');
   for (const type of ACCOUNT_TYPES) {
@@ -466,8 +463,7 @@ function openAccountForm({ account = null, prefill = {}, onSaved = null } = {}) 
       save.disabled = false;
       // `(user_id, name)` is unique — the usual failure is adding an account
       // whose name already exists. Say that in plain words, not the PG text.
-      errMsg.textContent =
-        err.code === '23505' ? t('accounts.duplicateName') : err.message;
+      errMsg.textContent = err.code === '23505' ? t('accounts.duplicateName') : err.message;
       errMsg.classList.remove('d-none');
       name.focus();
     }

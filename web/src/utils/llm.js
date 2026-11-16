@@ -61,8 +61,7 @@ function singleCall(model, key, prompt) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), TIMEOUT_MS);
   const url =
-    `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` +
-    `?key=${encodeURIComponent(key)}`;
+    `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` + `?key=${encodeURIComponent(key)}`;
   return fetch(url, {
     method: 'POST',
     signal: controller.signal,

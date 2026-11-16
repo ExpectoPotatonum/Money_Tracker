@@ -152,8 +152,7 @@ function askAiCell(row, categoryNames, root, filterStatus) {
       // the quiet "skipped" verdict. Either way the button becomes retryable.
       const verdict = document.createElement('span');
       verdict.className = `small d-block ${error.code === 'llm' ? 'text-danger' : 'text-muted'}`;
-      verdict.textContent =
-        error.code === 'llm' ? llmErrorMessage(error) : t('inbox.aiSkipped');
+      verdict.textContent = error.code === 'llm' ? llmErrorMessage(error) : t('inbox.aiSkipped');
       td.replaceChildren(verdict, btn);
       return;
     }

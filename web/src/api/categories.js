@@ -58,10 +58,7 @@ export async function deleteCategory(id) {
         .from('transactions')
         .select('id', { count: 'exact', head: true })
         .eq('category_id', id),
-      supabase
-        .from('categories')
-        .select('id', { count: 'exact', head: true })
-        .eq('parent_id', id),
+      supabase.from('categories').select('id', { count: 'exact', head: true }).eq('parent_id', id),
     ]);
   if (txnErr) throw asError(txnErr);
   if (childErr) throw asError(childErr);

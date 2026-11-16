@@ -16,8 +16,16 @@ import { t } from '../lib/i18n.js';
 // Part 6 — emerald-forward palette aligned to the bee-green tokens. Chart.js
 // paints to a canvas, so colors must be literals, not CSS variables.
 const PALETTE = [
-  '#10b981', '#0ea5e9', '#f59e0b', '#ef4444', '#8b5cf6',
-  '#14b8a6', '#f97316', '#d946ef', '#84cc16', '#94a3b8',
+  '#10b981',
+  '#0ea5e9',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#14b8a6',
+  '#f97316',
+  '#d946ef',
+  '#84cc16',
+  '#94a3b8',
 ];
 
 // All charts created this session, so a re-render can destroy the old ones
@@ -69,10 +77,10 @@ export async function renderReports(root) {
     themeWatcherInstalled = true;
     // Re-render when the theme flips so chart text stays readable. Charts are
     // cheap to rebuild; the observer survives navigation (module-level flag).
-    new MutationObserver(() => renderReports(root)).observe(
-      document.documentElement,
-      { attributes: true, attributeFilter: ['data-bs-theme'] },
-    );
+    new MutationObserver(() => renderReports(root)).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-bs-theme'],
+    });
   }
 
   const [txns, categories, currencies, accounts] = await Promise.all([
@@ -109,7 +117,9 @@ export async function renderReports(root) {
   for (const c of byId.values()) {
     if (c.parent_id && byId.has(c.parent_id)) byId.get(c.parent_id).children.push(c.id);
   }
-  const topLevel = [...byId.values()].filter((c) => !c.parent_id).sort((a, b) => a.name.localeCompare(b.name));
+  const topLevel = [...byId.values()]
+    .filter((c) => !c.parent_id)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   // id -> top-level ancestor id (used by the pie and budget roll-ups).
   const topOf = new Map();
@@ -250,8 +260,8 @@ export async function renderReports(root) {
       sums.set(id, (sums.get(id) ?? 0) + myr);
     }
     const names = new Map(topLevel.map((c) => [c.id, c.name]));
-    const labels = [...sums.keys()].map(
-      (id) => (id === '__unassigned' ? t('col.unknown') : names.get(id) ?? t('col.unknown')),
+    const labels = [...sums.keys()].map((id) =>
+      id === '__unassigned' ? t('col.unknown') : (names.get(id) ?? t('col.unknown')),
     );
     makeChart(pieBox.canvas, {
       type: 'pie',
@@ -302,7 +312,9 @@ export async function renderReports(root) {
     return map;
   };
 
-  const nonMyrCurrencies = [...new Set(accounts.map((a) => a.currency).filter((c) => c && c !== 'MYR'))];
+  const nonMyrCurrencies = [
+    ...new Set(accounts.map((a) => a.currency).filter((c) => c && c !== 'MYR')),
+  ];
   const startDate = (() => {
     const dates = [];
     for (const acc of accounts) {

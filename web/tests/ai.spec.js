@@ -130,7 +130,10 @@ function mockSupabase(page, { rawNotifications = [] } = {}) {
     if (method === 'PATCH') {
       return route.fulfill({ status: 204, headers: { 'content-type': 'application/json' } });
     }
-    return route.fulfill({ json: rawNotifications, headers: { 'content-type': 'application/json' } });
+    return route.fulfill({
+      json: rawNotifications,
+      headers: { 'content-type': 'application/json' },
+    });
   });
   page.route('**/api.frankfurter.dev/**', (route) =>
     route.fulfill({
@@ -187,9 +190,7 @@ async function open(page, path = '/', options = {}) {
             this.onstart?.();
             // 1) interim partial, 2) committed final phrase.
             setTimeout(() => {
-              this.emit([
-                { 0: { transcript: phrases.slice(0, 8), isFinal: false } },
-              ]);
+              this.emit([{ 0: { transcript: phrases.slice(0, 8), isFinal: false } }]);
             }, 10);
             setTimeout(() => {
               this.emit([{ 0: { transcript: phrases }, isFinal: true }]);
@@ -290,9 +291,7 @@ test('LLM model 404 shows a diagnostic instead of the generic parse failure', as
   // The 404 (with the auto-fallback retry exhausted) surfaces as "model
   // unavailable", the sentence is never blamed, and the button stays retryable.
   await expect(dialog.locator('.text-danger')).toContainText('404');
-  await expect(dialog.locator('.text-danger')).toContainText(
-    'Settings',
-  );
+  await expect(dialog.locator('.text-danger')).toContainText('Settings');
   await expect(page.locator('#nl-parse-btn')).toBeEnabled();
 });
 

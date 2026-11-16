@@ -59,8 +59,24 @@ const ACCOUNTS = [
 //   Overall       = 120 + 30 + 400 (s-1) = 550 / 500 → over budget (danger)
 // Credit + transfer halves never count as spend.
 const BUDGETS = [
-  { id: 'b-1', category_id: null, period: 'monthly', amount: 500, currency: 'MYR', created_at: '2026-09-01T00:00:00Z', categories: null },
-  { id: 'b-2', category_id: 'f-1', period: 'monthly', amount: 200, currency: 'MYR', created_at: '2026-09-01T00:00:00Z', categories: CATEGORIES[0] },
+  {
+    id: 'b-1',
+    category_id: null,
+    period: 'monthly',
+    amount: 500,
+    currency: 'MYR',
+    created_at: '2026-09-01T00:00:00Z',
+    categories: null,
+  },
+  {
+    id: 'b-2',
+    category_id: 'f-1',
+    period: 'monthly',
+    amount: 200,
+    currency: 'MYR',
+    created_at: '2026-09-01T00:00:00Z',
+    categories: CATEGORIES[0],
+  },
 ];
 
 const TX = (id, amount, direction, categoryId, accountId, transferGroupId = null) => ({
@@ -169,7 +185,9 @@ async function openDashboard(page, options) {
   await expect(page.locator('#budgets-section')).toBeVisible();
 }
 
-test('dashboard renders inline budget bars with roll-up and over-budget state', async ({ page }) => {
+test('dashboard renders inline budget bars with roll-up and over-budget state', async ({
+  page,
+}) => {
   await openDashboard(page);
 
   const section = page.locator('#budgets-section');

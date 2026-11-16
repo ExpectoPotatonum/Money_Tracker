@@ -140,7 +140,11 @@ export function openTransferDialog({ accounts = [], onSaved = null } = {}) {
   destCurSel.addEventListener('change', updateRate);
 
   // --- Date + notes ---
-  const date = field('datetime-local', t('transfer.date'), toDateTimeLocal(new Date().toISOString()));
+  const date = field(
+    'datetime-local',
+    t('transfer.date'),
+    toDateTimeLocal(new Date().toISOString()),
+  );
   const notes = field('text', t('transfer.notes'), '');
   const metaRow = document.createElement('div');
   metaRow.className = 'row g-2 mt-1';

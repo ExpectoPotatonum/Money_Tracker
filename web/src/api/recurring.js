@@ -46,7 +46,11 @@ export async function saveRecurringEntry(entry) {
     if (error) throw new Error(error.message);
     return data;
   }
-  const { data, error } = await supabase.from('recurring_entries').insert(clean).select('*').single();
+  const { data, error } = await supabase
+    .from('recurring_entries')
+    .insert(clean)
+    .select('*')
+    .single();
   if (error) throw new Error(error.message);
   return data;
 }

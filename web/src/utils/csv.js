@@ -27,7 +27,7 @@ export function buildTransactionsCsv({
     const pair = transferPairs.get(t.transfer_group_id) ?? {};
     const account = isTransfer
       ? `${accountNames.get(pair.source) ?? '?'} → ${accountNames.get(pair.dest) ?? '?'}`
-      : accountNames.get(t.account_id) ?? '';
+      : (accountNames.get(t.account_id) ?? '');
     return [
       t.transaction_date,
       t.merchant_raw ?? '',

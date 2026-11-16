@@ -175,9 +175,7 @@ export async function timeSeries(base, quote, startDate, endDate) {
 
   const promise = (async () => {
     try {
-      const res = await fetch(
-        `${API_BASE}/${start}..${end}?base=${base}&symbols=${quote}`,
-      );
+      const res = await fetch(`${API_BASE}/${start}..${end}?base=${base}&symbols=${quote}`);
       if (!res.ok) return [];
       const data = await res.json();
       const rates = data?.rates ?? null;

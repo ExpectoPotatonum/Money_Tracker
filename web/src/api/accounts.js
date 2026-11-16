@@ -183,9 +183,6 @@ export async function insertTransfer({
 
 // Delete both halves of a transfer in one request (app-enforced pairing).
 export async function deleteTransfer(groupId) {
-  const { error } = await supabase
-    .from('transactions')
-    .delete()
-    .eq('transfer_group_id', groupId);
+  const { error } = await supabase.from('transactions').delete().eq('transfer_group_id', groupId);
   if (error) throw new Error(error.message);
 }

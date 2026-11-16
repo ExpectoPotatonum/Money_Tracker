@@ -90,9 +90,7 @@ export async function renderRawNotifications(root, offset = 0) {
     tr.appendChild(app);
 
     const status = document.createElement('td');
-    status.appendChild(
-      badge(row.parse_status, STATUS_BADGES[row.parse_status] ?? 'bg-secondary'),
-    );
+    status.appendChild(badge(row.parse_status, STATUS_BADGES[row.parse_status] ?? 'bg-secondary'));
     tr.appendChild(status);
 
     const title = document.createElement('td');
@@ -138,7 +136,9 @@ function pager(offset, count, root, hasNext) {
   prev.id = 'raw-prev-btn';
   prev.textContent = t('raw.prev');
   prev.disabled = offset <= 0;
-  prev.addEventListener('click', () => renderRawNotifications(root, Math.max(0, offset - PAGE_SIZE)));
+  prev.addEventListener('click', () =>
+    renderRawNotifications(root, Math.max(0, offset - PAGE_SIZE)),
+  );
   wrap.appendChild(prev);
 
   const info = document.createElement('span');

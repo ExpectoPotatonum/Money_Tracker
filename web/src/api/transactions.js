@@ -6,7 +6,12 @@ import { categoryNameMap, sortCategoryRows } from '../utils/categories.js';
 const TXN_SELECT =
   'id, amount, currency, direction, merchant_display, merchant_raw, category_id, transaction_date, source_package, source_app_label, status, notes, is_recurring, account_id, transfer_group_id, transaction_tags ( tag_id, tags ( id, name, color ) )';
 
-export async function getTransactions({ withinDays = 30, limit = 100, status = null, since = null } = {}) {
+export async function getTransactions({
+  withinDays = 30,
+  limit = 100,
+  status = null,
+  since = null,
+} = {}) {
   let query = supabase
     .from('transactions')
     .select(TXN_SELECT)

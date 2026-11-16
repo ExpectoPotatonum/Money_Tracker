@@ -115,7 +115,7 @@ export function openCategoryManager({ onChanged = null } = {}) {
     name.textContent = row.name;
     el.appendChild(name);
 
-    if (depth === 0 && (rows.some((c) => c.parent_id === row.id))) {
+    if (depth === 0 && rows.some((c) => c.parent_id === row.id)) {
       const parentTag = document.createElement('span');
       parentTag.className = 'badge text-bg-secondary';
       parentTag.textContent = t('categories.parentBadge');
@@ -268,8 +268,7 @@ function openCategoryForm({ category = null, all = [], onSaved = null } = {}) {
       if (onSaved) onSaved(saved);
     } catch (err) {
       save.disabled = false;
-      errMsg.textContent =
-        err.code === '23505' ? t('categories.duplicateName') : err.message;
+      errMsg.textContent = err.code === '23505' ? t('categories.duplicateName') : err.message;
       errMsg.classList.remove('d-none');
       name.focus();
     }

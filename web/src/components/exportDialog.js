@@ -16,9 +16,7 @@ export function openExportDialog({ month = null } = {}) {
   const { dialog, body, footer } = openModal({ title: t('export.title') });
   body.className = 'modal-body';
 
-  body.appendChild(
-    hint(t('export.hint')),
-  );
+  body.appendChild(hint(t('export.hint')));
 
   const field = (labelText, node) => {
     const grp = document.createElement('div');

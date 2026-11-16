@@ -17,9 +17,12 @@ import { colorSwatches } from '../utils/colors.js';
 
 export function openTagManager({ onChanged = null } = {}) {
   let changed = false;
-  const { dialog, body, footer } = openModal({ title: t('tags.managerTitle'), onClose: () => {
-    if (changed && onChanged) onChanged();
-  } });
+  const { dialog, body, footer } = openModal({
+    title: t('tags.managerTitle'),
+    onClose: () => {
+      if (changed && onChanged) onChanged();
+    },
+  });
   body.className = 'modal-body';
 
   const close = document.createElement('button');
