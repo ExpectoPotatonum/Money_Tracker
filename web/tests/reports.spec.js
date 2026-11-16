@@ -151,7 +151,8 @@ const TRANSACTIONS = [
 
 // Expected net worth now: a-1 = 1000 − (12 + 8.5 + 2.5) + 50 (transfer in) =
 // 1027; a-2 = 0 + 500 − 50 (transfer out) = 450. Total 1477.
-const NET_WORTH_NOW = 'RM 1477.00';
+// formatMoney now emits thousand separators, so it renders "RM 1,477.00".
+const NET_WORTH_NOW = 'RM 1,477.00';
 
 function mockSupabase(page, { transactions = TRANSACTIONS, accounts = ACCOUNTS } = {}) {
   page.route('**placeholder.supabase.co/**', (route) =>

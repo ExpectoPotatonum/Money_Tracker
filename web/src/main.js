@@ -61,7 +61,7 @@ function setSidebarCollapsed(shell, collapsed) {
   }
 }
 
-function renderSidebar(shell) {
+function renderSidebar() {
   const nav = document.createElement('nav');
   nav.className = 'app-sidebar';
 
@@ -75,23 +75,6 @@ function renderSidebar(shell) {
   brand.appendChild(brandTitle);
   nav.appendChild(brand);
 
-  const collapsedNow = shell.classList.contains('sidebar-collapsed');
-  const toggle = document.createElement('button');
-  toggle.type = 'button';
-  toggle.id = 'sidebar-collapse-btn';
-  toggle.className = 'sidebar-collapse-btn';
-  toggle.setAttribute('aria-expanded', String(!collapsedNow));
-  toggle.title = t(collapsedNow ? 'nav.expand' : 'nav.collapse');
-  toggle.appendChild(icon(collapsedNow ? 'chevronRight' : 'chevronLeft', { size: 16 }));
-  toggle.addEventListener('click', () => {
-    const next = !shell.classList.contains('sidebar-collapsed');
-    setSidebarCollapsed(shell, next);
-    toggle.setAttribute('aria-expanded', String(!next));
-    toggle.title = t(next ? 'nav.expand' : 'nav.collapse');
-    toggle.replaceChildren(icon(next ? 'chevronRight' : 'chevronLeft', { size: 16 }));
-  });
-  nav.appendChild(toggle);
-
   // Primary links. Keep the .nav-link class so the e2e `nav .nav-link.active`
   // assertion (reports.spec) keeps matching — the sidebar IS the nav element.
   const links = document.createElement('div');
@@ -101,7 +84,10 @@ function renderSidebar(shell) {
     const a = document.createElement('a');
     a.href = href;
     a.className = `nav-link ${currentView() === view ? 'active' : ''}`;
-    a.title = label;
+    // data-tip drives the collapsed-rail tooltip; aria-label keeps the
+    // accessible name once the text label is display:none.
+    a.dataset.tip = label;
+    a.setAttribute('aria-label', label);
     a.appendChild(icon(iconName, { size: 18 }));
     const span = document.createElement('span');
     span.className = 'sidebar-label';
@@ -129,7 +115,8 @@ function renderSidebar(shell) {
     btn.type = 'button';
     btn.id = id;
     btn.className = 'sidebar-btn sidebar-sub-btn';
-    btn.title = label;
+    btn.dataset.tip = label;
+    btn.setAttribute('aria-label', label);
     btn.appendChild(icon(iconName, { size: 16 }));
     const span = document.createElement('span');
     span.className = 'sidebar-label';
@@ -167,7 +154,7 @@ function renderSidebar(shell) {
   themeBtn.type = 'button';
   themeBtn.id = 'nav-theme-btn';
   themeBtn.className = 'sidebar-btn';
-  themeBtn.title = t('nav.theme.cycle');
+  themeBtn.dataset.tip = t('nav.theme');
   themeBtn.setAttribute('aria-label', t('nav.theme'));
   const themeGlyph = document.createElement('span');
   themeGlyph.className = 'sidebar-glyph';
@@ -188,7 +175,8 @@ function renderSidebar(shell) {
   settingsBtn.type = 'button';
   settingsBtn.id = 'nav-settings-btn';
   settingsBtn.className = 'sidebar-btn';
-  settingsBtn.title = t('nav.settings');
+  settingsBtn.dataset.tip = t('nav.settings');
+  settingsBtn.setAttribute('aria-label', t('nav.settings'));
   settingsBtn.appendChild(icon('settings', { size: 18 }));
   const settingsLabel = document.createElement('span');
   settingsLabel.className = 'sidebar-label';
@@ -199,7 +187,11 @@ function renderSidebar(shell) {
   const signOutBtn = document.createElement('button');
   signOutBtn.type = 'button';
   signOutBtn.className = 'sidebar-btn';
-  signOutBtn.title = t('nav.signOut');
+  signOutBtn.dataset.tip = t('nav.signOut');
+  signOutBtn.setAttribute('aria-label', t('nav.signOut'));
+  // An icon, not just a label: the collapsed rail hides every .sidebar-label,
+  // so a label-only Sign out vanished entirely when collapsed.
+  signOutBtn.appendChild(icon('signOut', { size: 18 }));
   const signOutLabel = document.createElement('span');
   signOutLabel.className = 'sidebar-label';
   signOutLabel.textContent = t('nav.signOut');
@@ -209,6 +201,30 @@ function renderSidebar(shell) {
   footer.append(themeBtn, settingsBtn, signOutBtn);
   nav.appendChild(footer);
   return nav;
+}
+
+// Hamburger toggle, fixed to the top-left of the whole page (the chevron it
+// replaced lived inside the rail). Toggles the shell's collapsed class and
+// keeps the persisted flag in sync; the icon never changes.
+function sidebarToggle(shell) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'sidebar-collapse-btn';
+  btn.className = 'sidebar-toggle';
+  const sync = () => {
+    const collapsed = shell.classList.contains('sidebar-collapsed');
+    const label = t(collapsed ? 'nav.expand' : 'nav.collapse');
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+  };
+  btn.appendChild(icon('menu', { size: 20 }));
+  btn.addEventListener('click', () => {
+    setSidebarCollapsed(shell, !shell.classList.contains('sidebar-collapsed'));
+    sync();
+  });
+  sync();
+  return btn;
 }
 
 async function render() {
@@ -223,7 +239,10 @@ async function render() {
   const shell = document.createElement('div');
   shell.className = 'app-shell';
   shell.classList.toggle('sidebar-collapsed', sidebarCollapsed());
-  shell.append(renderSidebar(shell), viewRoot);
+  // The hamburger lives OUTSIDE the rail, fixed to the top-left of the page,
+  // so it stays put when the sidebar collapses (the old in-rail chevron moved
+  // with it). It still drives the shell's collapsed class.
+  shell.append(renderSidebar(), viewRoot, sidebarToggle(shell));
   app.replaceChildren(shell);
 
   try {

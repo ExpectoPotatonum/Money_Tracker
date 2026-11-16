@@ -40,7 +40,9 @@ export async function openBudgetManager({ onChanged = null } = {}) {
 
         const name = document.createElement('div');
         const label = document.createElement('div');
-        label.textContent = b.category ? `${b.category.icon ?? ''} ${b.category.name}`.trim() : t('budgets.overall');
+        label.textContent = b.category
+          ? `${b.category.icon ?? ''} ${b.category.name}`.trim()
+          : t('budgets.overall');
         const meta = document.createElement('small');
         meta.className = 'text-muted';
         meta.textContent = `${formatMoney(b.amount, b.currency)} · ${b.period}`;
@@ -52,7 +54,9 @@ export async function openBudgetManager({ onChanged = null } = {}) {
         edit.type = 'button';
         edit.className = 'btn btn-outline-secondary';
         edit.textContent = t('budgets.edit');
-        edit.addEventListener('click', () => openBudgetForm({ budget: b, categories, onSaved: reload }));
+        edit.addEventListener('click', () =>
+          openBudgetForm({ budget: b, categories, onSaved: reload }),
+        );
         const del = document.createElement('button');
         del.type = 'button';
         del.className = 'btn btn-outline-danger';
@@ -79,6 +83,10 @@ export async function openBudgetManager({ onChanged = null } = {}) {
   add.type = 'button';
   add.className = 'btn btn-sm btn-outline-primary';
   add.textContent = t('budgets.add');
+  // Disabled until the first reload lands: the add form reads `latestCategories`
+  // at click time, and the footer (with this button) is appended before that
+  // fetch resolves — clicking too early used to open a category-less picker.
+  add.disabled = true;
   add.addEventListener('click', () =>
     openBudgetForm({ budget: null, categories: latestCategories, onSaved: reload }),
   );
@@ -89,14 +97,20 @@ export async function openBudgetManager({ onChanged = null } = {}) {
   close.addEventListener('click', () => dialog.close());
   footer.append(close, add);
 
-  await reload();
+  try {
+    await reload();
+  } finally {
+    add.disabled = false;
+  }
 }
 
 // Second <dialog> stacked over the manager (same pattern as accountManager.js
 // Add/edit form). Fields: kind (overall / per-category), category, amount.
 function openBudgetForm({ budget = null, categories = [], onSaved = null } = {}) {
   const isEdit = Boolean(budget);
-  const { dialog, body, footer } = openModal({ title: isEdit ? t('budgets.edit') : t('budgets.add') });
+  const { dialog, body, footer } = openModal({
+    title: isEdit ? t('budgets.edit') : t('budgets.add'),
+  });
   body.className = 'modal-body';
 
   const field = (labelText) => {
@@ -113,8 +127,20 @@ function openBudgetForm({ budget = null, categories = [], onSaved = null } = {})
 
   // kind radio: overall vs category
   const kindWrap = field(t('budgets.field.type'));
-  const overallRadio = radio('kind-overall', 'kind', 'overall', t('budgets.type.overall'), !budget || !budget.category_id);
-  const categoryRadio = radio('kind-category', 'kind', 'category', t('budgets.type.category'), Boolean(budget && budget.category_id));
+  const overallRadio = radio(
+    'kind-overall',
+    'kind',
+    'overall',
+    t('budgets.type.overall'),
+    !budget || !budget.category_id,
+  );
+  const categoryRadio = radio(
+    'kind-category',
+    'kind',
+    'category',
+    t('budgets.type.category'),
+    Boolean(budget && budget.category_id),
+  );
   kindWrap.append(overallRadio, categoryRadio);
 
   // category select (hidden when overall)
@@ -133,7 +159,11 @@ function openBudgetForm({ budget = null, categories = [], onSaved = null } = {})
   }
   catSelect.value = budget?.category_id ?? '';
   catWrap.appendChild(catSelect);
-  catWrap.classList.toggle('d-none', overallRadio.checked);
+  // The whole field group (label + control) hides for an overall budget —
+  // hiding only the control left an orphaned "Category" label behind, which
+  // read as "the category picker is missing". The group is catWrap's parent
+  // `.mb-3` wrapper built by field().
+  const catGroup = catWrap.parentElement ?? catWrap;
 
   // amount
   const amountWrap = field(t('budgets.field.amount'));
@@ -151,8 +181,9 @@ function openBudgetForm({ budget = null, categories = [], onSaved = null } = {})
   amountWrap.appendChild(hint);
 
   const syncKind = () => {
-    catWrap.classList.toggle('d-none', overallRadio.checked);
+    catGroup.classList.toggle('d-none', overallRadio.checked);
   };
+  syncKind();
   overallRadio.addEventListener('change', syncKind);
   categoryRadio.addEventListener('change', syncKind);
 

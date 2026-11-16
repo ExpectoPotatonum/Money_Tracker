@@ -43,9 +43,12 @@ const DICT = {
     'nl.failed':
       'Could not parse that into a transaction — try wording it as an amount + if you paid or received.',
     'ai.error.network': 'Could not reach the AI provider — check your connection.',
-    'ai.error.model': 'The AI provider says that model is unavailable (HTTP 404). Check the model name in Settings.',
-    'ai.error.quota': 'AI rate limit hit (HTTP {status}). Wait a moment and retry, or check your key.',
-    'ai.error.generic': 'AI request failed (HTTP {status}). Check your API key and model in Settings.',
+    'ai.error.model':
+      'The AI provider says that model is unavailable (HTTP 404). Check the model name in Settings.',
+    'ai.error.quota':
+      'AI rate limit hit (HTTP {status}). Wait a moment and retry, or check your key.',
+    'ai.error.generic':
+      'AI request failed (HTTP {status}). Check your API key and model in Settings.',
     'ai.error.empty': 'The AI provider returned an empty reply — try again.',
     'nl.preview': 'Review the result, then save:',
     'nl.save': 'Save transaction',
@@ -158,6 +161,10 @@ const DICT = {
       'h ago. Check battery restrictions and notification access (agents.md §10).',
     'dash.skippedSuffix': 'transaction(s) skipped from the MYR total — no rate for that currency.',
     'dash.moneyIn': 'Money in',
+    'dash.recent': 'Recent Transactions',
+    'dash.search': 'Search transactions…',
+    'dash.filterCategory': 'All categories',
+    'dash.noMatches': 'No transactions match your search.',
     'inbox.title': 'Review inbox',
     'inbox.filters.all': 'All',
     'inbox.filters.failed': 'Failed',
@@ -230,7 +237,8 @@ const DICT = {
     'categories.field.icon': 'Icon',
     'categories.field.color': 'Colour',
     'export.title': 'Export CSV',
-    'export.hint': 'Download the selected month as a CSV file. MYR values use the historical rate at each transaction date.',
+    'export.hint':
+      'Download the selected month as a CSV file. MYR values use the historical rate at each transaction date.',
     'export.month': 'Month',
     'export.scope': 'Rows to include',
     'export.scope.all': 'All rows (including transfers)',
@@ -238,7 +246,8 @@ const DICT = {
     'export.scope.income': 'Money in only',
     'export.run': 'Download CSV',
     'raw.title': 'Raw notifications',
-    'raw.hint': 'Every captured notification, newest first. Read-only — raw rows are never edited or deleted (AGENTS §16).',
+    'raw.hint':
+      'Every captured notification, newest first. Read-only — raw rows are never edited or deleted (AGENTS §16).',
     'raw.empty': 'No raw notifications captured yet.',
     'raw.prev': 'Previous',
     'raw.next': 'Next',
@@ -449,6 +458,10 @@ const DICT = {
     'dash.offlineSuffix': ' 小时前。请检查省电限制和通知权限。',
     'dash.skippedSuffix': ' 笔交易无法换算成 MYR——该货币没有汇率。',
     'dash.moneyIn': '收入',
+    'dash.recent': '最近交易',
+    'dash.search': '搜索交易…',
+    'dash.filterCategory': '全部类别',
+    'dash.noMatches': '没有符合搜索的交易。',
     'inbox.title': '审核收件箱',
     'inbox.filters.all': '全部',
     'inbox.filters.failed': '解析失败',

@@ -75,19 +75,33 @@ const MYT_OFFSET_MS = 8 * 3_600_000;
 function inMonth(offsetMonths, daysAgo = 0) {
   const now = new Date(Date.now() + MYT_OFFSET_MS);
   const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offsetMonths, 1));
-  const lastDay = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  const lastDay = new Date(
+    Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0),
+  ).getUTCDate();
   const anchorDay = offsetMonths === 0 ? now.getUTCDate() : lastDay;
   const day = Math.max(1, Math.min(lastDay, anchorDay - daysAgo));
   // 04:00 UTC = 12:00 MYT — unambiguously inside the intended MYT day.
-  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), day, 4, 0, 0)).toISOString();
+  return new Date(
+    Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), day, 4, 0, 0),
+  ).toISOString();
 }
 
 function monthLabel(offsetMonths) {
   const now = new Date(Date.now() + MYT_OFFSET_MS);
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offsetMonths, 1));
   const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
   ];
   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
@@ -646,9 +660,9 @@ test('read-only rows show account names and an inline picker for unassigned rows
   await openDashboard(page);
 
   // t-1 (Shopee) is assigned to TnG eWallet (a-1) -> the name shows in the
-  // Account column (index 6: Date, Receiver, Category, Amount, MYR, Sent from, Account).
+  // merged Account column (index 4: Date, Receiver, Category, Amount, Account).
   const shopee = page.locator('tbody tr', { hasText: 'Shopee' });
-  await expect(shopee.locator('td').nth(6)).toHaveText('TnG eWallet');
+  await expect(shopee.locator('td').nth(4)).toHaveText('TnG eWallet');
 
   // t-2 (Netflix) is unassigned -> inline picker, and picking PATCHes at once.
   const netflix = page.locator('tbody tr', { hasText: 'Netflix' });
@@ -672,10 +686,7 @@ test('edit mode: changing the account issues a PATCH for that row', async ({ pag
 
   await page.click('#edit-mode-toggle');
   // The first row (t-1) is on TnG eWallet (a-1); move it to HLB Debit Card.
-  const accountSel = page
-    .locator('tbody tr')
-    .first()
-    .locator('select[aria-label="Set account"]');
+  const accountSel = page.locator('tbody tr').first().locator('select[aria-label="Set account"]');
   await accountSel.selectOption('a-2');
 
   await page.click('#edit-mode-toggle');
@@ -689,13 +700,13 @@ test('transfer halves render in their own section, as A→B, and never move the 
   await openDashboard(page, { transactions: [...TRANSACTIONS, ...TRANSFER_PAIR] });
 
   await expect(page.locator('h2', { hasText: 'Transfers' })).toHaveCount(1);
-  // Both halves show the pair display in the Account column (index 6).
+  // Both halves show the pair display in the merged Account column (index 4).
   const transferRows = page.locator('tbody tr', { hasText: 'Transfer' });
   await expect(transferRows).toHaveCount(2);
-  await expect(transferRows.nth(0).locator('td').nth(6)).toHaveText(
+  await expect(transferRows.nth(0).locator('td').nth(4)).toHaveText(
     '⇄ TnG eWallet → HLB Debit Card',
   );
-  await expect(transferRows.nth(1).locator('td').nth(6)).toHaveText(
+  await expect(transferRows.nth(1).locator('td').nth(4)).toHaveText(
     '⇄ TnG eWallet → HLB Debit Card',
   );
 
@@ -703,9 +714,7 @@ test('transfer halves render in their own section, as A→B, and never move the 
   await expect(page.locator('#total-myr')).toHaveText('RM 68.00');
 });
 
-test('transfer dialog creates two linked rows sharing a transfer_group_id', async ({
-  page,
-}) => {
+test('transfer dialog creates two linked rows sharing a transfer_group_id', async ({ page }) => {
   const posts = [];
   page.on('request', (req) => {
     if (req.method() === 'POST' && req.url().includes('/rest/v1/transactions')) {

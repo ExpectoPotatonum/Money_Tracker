@@ -163,6 +163,7 @@ async function loadDashboard(root) {
   const [
     allTransactions,
     categoryNames,
+    categoryTree,
     heartbeat,
     alerts,
     currencies,
@@ -172,6 +173,7 @@ async function loadDashboard(root) {
   ] = await Promise.all([
     getAllTransactions(),
     getCategories(),
+    getCategoryTree(),
     getLatestHeartbeat(),
     getOpenAlerts(),
     getCurrencies(),
@@ -184,6 +186,7 @@ async function loadDashboard(root) {
   loaded = {
     allTransactions,
     categoryNames,
+    categoryTree,
     heartbeat,
     alerts,
     tagGroups,
@@ -193,7 +196,6 @@ async function loadDashboard(root) {
   await renderLoaded(root, loaded);
 }
 
-
 // Re-renders the view from an ALREADY loaded payload. Month navigation goes
 // through here, so switching months never re-fetches the whole history.
 async function renderLoaded(root, data) {
@@ -202,6 +204,7 @@ async function renderLoaded(root, data) {
   const {
     allTransactions,
     categoryNames,
+    categoryTree,
     heartbeat,
     alerts,
     tagGroups,
@@ -212,6 +215,13 @@ async function renderLoaded(root, data) {
   if (!selectedMonth) selectedMonth = currentMonthKey();
   const month = selectedMonth;
   const transactions = monthRows(allTransactions, month);
+
+  // id -> hex colour, from the category tree. Drives the tinted category pills
+  // in the table and the per-category colours on the share bars; a category
+  // with no colour falls back to the neutral home palette at the call site.
+  const categoryColors = new Map(
+    (categoryTree ?? []).filter((c) => c.color).map((c) => [c.id, c.color]),
+  );
 
   // Phase 3: account display names + a per-transfer pair map (which half is
   // the source = debit side, which is the destination = credit side). The pair
@@ -269,12 +279,8 @@ async function renderLoaded(root, data) {
   // tables AND the totals — moving money between own accounts isn't spending.
   // The halves still go through the MYR conversion below so the CSV export has
   // a MYR figure for every row, transfers included.
-  const debits = transactions.filter(
-    (t) => t.direction === 'debit' && !t.transfer_group_id,
-  );
-  const credits = transactions.filter(
-    (t) => t.direction === 'credit' && !t.transfer_group_id,
-  );
+  const debits = transactions.filter((t) => t.direction === 'debit' && !t.transfer_group_id);
+  const credits = transactions.filter((t) => t.direction === 'credit' && !t.transfer_group_id);
   const transfers = transactions.filter((t) => t.transfer_group_id);
 
   // Month figures + the month-before figures (for the comparison line under
@@ -293,7 +299,8 @@ async function renderLoaded(root, data) {
   };
 
   const header = document.createElement('div');
-  header.className = 'd-flex flex-wrap justify-content-between align-items-center gap-2 mb-3';
+  header.className =
+    'dash-header d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3';
   const left = document.createElement('div');
   left.className = 'd-flex flex-wrap align-items-center gap-2';
   const h = document.createElement('h1');
@@ -301,25 +308,34 @@ async function renderLoaded(root, data) {
   h.textContent = t('dash.title');
   const addBtn = iconButton({
     id: 'nl-add-btn',
-    iconName: 'text',
+    iconName: 'textT',
     label: t('nl.title'),
-    onClick: () => openNlModal({ categoryNames, accounts, onSaved: (saved) => {
-      if (saved) mergeRows([saved]);
-      softRefresh();
-    } }),
+    onClick: () =>
+      openNlModal({
+        categoryNames,
+        accounts,
+        onSaved: (saved) => {
+          if (saved) mergeRows([saved]);
+          softRefresh();
+        },
+      }),
   });
+  // Edit mode is a CSS-drawn toggle switch (no .btn, no svg). It keeps
+  // role="switch" + aria-checked because the e2e asserts aria-checked.
   const editBtn = document.createElement('button');
   editBtn.type = 'button';
   editBtn.id = 'edit-mode-toggle';
-  editBtn.className = 'btn btn-sm btn-outline-primary edit-switch';
+  editBtn.className = 'edit-switch';
   editBtn.setAttribute('role', 'switch');
   editBtn.setAttribute('aria-checked', String(editMode));
   editBtn.setAttribute('aria-label', t('dash.editMode'));
   editBtn.title = t('dash.editMode');
-  editBtn.appendChild(icon('toggle', { size: 18 }));
+  const knob = document.createElement('span');
+  knob.className = 'edit-switch-knob';
+  editBtn.appendChild(knob);
   const syncEditBtn = () => {
     editBtn.setAttribute('aria-checked', String(editMode));
-    editBtn.className = `btn btn-sm edit-switch ${editMode ? 'btn-primary is-on' : 'btn-outline-primary'}`;
+    editBtn.classList.toggle('is-on', editMode);
     editBtn.setAttribute('aria-label', editMode ? t('dash.editModeOn') : t('dash.editMode'));
     editBtn.title = editBtn.getAttribute('aria-label');
   };
@@ -341,9 +357,10 @@ async function renderLoaded(root, data) {
 
   // Part 6 — "one-screen overview": summary tiles + an accounts overview row.
   // `#total-myr` moves from the header into the expense tile — same id, same
-  // value — so the e2e assertions are untouched.
-  root.appendChild(summaryStrip(stats.income, stats.expense));
-  root.appendChild(comparisonLine(stats, prevStats, prevMonth));
+  // value — so the e2e assertions are untouched. The month-over-month deltas
+  // live inside the INCOME and SPENT tiles now; the `#month-compare` id stays
+  // on the wrapper so the existing month-scoping assertions still resolve.
+  root.appendChild(summaryStrip(stats, prevStats, prevMonth));
   // Balances are a full-history estimate (opening balance + every loaded
   // flow), not a per-month figure — a one-month window would understate them.
   const visibleAccounts = accounts.filter((a) => !a.is_hidden);
@@ -362,6 +379,7 @@ async function renderLoaded(root, data) {
       debits,
       myrTotals: stats.myrTotals,
       categoryNames,
+      categoryColors,
       trend,
     });
   } catch (err) {
@@ -382,7 +400,7 @@ async function renderLoaded(root, data) {
   // from the SAME month rows as the tiles — no extra fetch, and switching the
   // month switches the budget spend with it.
   if (budgets.length > 0) {
-    root.appendChild(await budgetsSection(budgets, transactions, month));
+    root.appendChild(await budgetsSection(budgets, transactions, month, categoryTree));
   }
 
   if (debits.length === 0 && credits.length === 0 && transfers.length === 0) {
@@ -395,6 +413,7 @@ async function renderLoaded(root, data) {
 
   const tableProps = {
     categoryNames,
+    categoryColors,
     allTags,
     accounts,
     accountNames,
@@ -454,7 +473,16 @@ async function renderLoaded(root, data) {
       await softRefresh();
     },
   };
-  root.appendChild(transactionTable({ transactions: debits, ...tableProps }));
+  // "Recent Transactions" — the main spending table, now under a heading with a
+  // client-side search + category filter bar. The other two tables keep their
+  // own headings and are unfiltered.
+  root.appendChild(
+    recentTransactions({
+      transactions: debits,
+      tableProps,
+      categoryNames,
+    }),
+  );
 
   if (credits.length > 0) {
     const creditHeading = document.createElement('h2');
@@ -471,6 +499,87 @@ async function renderLoaded(root, data) {
     root.appendChild(transferHeading);
     root.appendChild(transactionTable({ transactions: transfers, ...tableProps }));
   }
+}
+
+// The main spending table + a heading and a search / category filter bar. The
+// filter is purely client-side: it shows/hides already-rendered rows, so typing
+// never triggers a re-render (which would drop the search field's focus).
+function recentTransactions({ transactions, tableProps, categoryNames }) {
+  const section = document.createElement('section');
+  section.id = 'recent-transactions';
+  section.className = 'mt-4';
+
+  const head = document.createElement('div');
+  head.className =
+    'dash-section-head d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2';
+  const title = document.createElement('h2');
+  title.className = 'h5 mb-0';
+  title.textContent = t('dash.recent');
+  head.appendChild(title);
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'd-flex flex-wrap align-items-center gap-2';
+
+  const searchWrap = document.createElement('div');
+  searchWrap.className = 'input-group input-group-sm tx-search';
+  const searchIcon = document.createElement('span');
+  searchIcon.className = 'input-group-text';
+  searchIcon.appendChild(icon('search', { size: 15 }));
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.id = 'tx-search';
+  search.className = 'form-control';
+  search.placeholder = t('dash.search');
+  search.setAttribute('aria-label', t('dash.search'));
+  searchWrap.append(searchIcon, search);
+
+  const filter = document.createElement('select');
+  filter.id = 'tx-category-filter';
+  filter.className = 'form-select form-select-sm w-auto';
+  filter.setAttribute('aria-label', t('dash.filterCategory'));
+  const allOpt = document.createElement('option');
+  allOpt.value = '';
+  allOpt.textContent = t('dash.filterCategory');
+  filter.appendChild(allOpt);
+  // Only categories that actually appear in this month's rows (and, when the
+  // tree carries colours, in a stable alphabetical order via categoryNames).
+  const present = new Set(transactions.map((tx) => tx.category_id).filter(Boolean));
+  for (const [id, name] of categoryNames) {
+    if (!present.has(id)) continue;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = name;
+    filter.appendChild(opt);
+  }
+
+  toolbar.append(searchWrap, filter);
+  head.appendChild(toolbar);
+
+  const table = transactionTable({ transactions, ...tableProps });
+
+  const apply = () => {
+    const q = search.value.trim().toLowerCase();
+    const cat = filter.value;
+    const rows = table.querySelectorAll('tbody tr');
+    let shown = 0;
+    for (const tr of rows) {
+      const matchesText = !q || tr.textContent.toLowerCase().includes(q);
+      const matchesCat = !cat || tr.dataset.cat === cat;
+      const ok = matchesText && matchesCat;
+      tr.classList.toggle('d-none', !ok);
+      if (ok) shown += 1;
+    }
+    empty.classList.toggle('d-none', shown > 0);
+  };
+  search.addEventListener('input', apply);
+  filter.addEventListener('change', apply);
+
+  const empty = document.createElement('p');
+  empty.className = 'text-center text-muted py-4 d-none';
+  empty.textContent = t('dash.noMatches');
+
+  section.append(head, table, empty);
+  return section;
 }
 
 // PATCH every dirty row in one pass. Clears the map first, then re-queues any
@@ -573,8 +682,8 @@ function transferBtn(accountList) {
 // spend (decision 3). Read-only, computed at display time; over-budget bars
 // turn danger-coloured. Spend comes from the SAME month rows as the tiles, so
 // the section follows the month selector without another fetch.
-async function budgetsSection(budgets, monthTxns, month) {
-  const tree = await getCategoryTree();
+async function budgetsSection(budgets, monthTxns, month, categoryTree = null) {
+  const tree = categoryTree ?? (await getCategoryTree());
   const rows = await computeBudgetSpend(budgets, tree, monthTxns);
 
   const box = document.createElement('div');
@@ -670,12 +779,40 @@ async function computeBudgetSpend(budgets, tree, txns) {
 }
 
 // Part 6 — summary tile strip: month income / expense (`#total-myr`) / net.
-function summaryStrip(income, expense) {
+// The month-over-month deltas live INSIDE the income and spent tiles (owner
+// request) rather than on a separate line. `#month-compare` stays on the
+// wrapper so the existing month-scoping e2e assertions still resolve.
+function summaryStrip(current, previous, prevKey) {
+  const wrap = document.createElement('div');
+  wrap.id = 'month-compare';
+  wrap.className = 'mb-3';
+
   const strip = document.createElement('div');
-  strip.className = 'row g-2 mb-3';
+  strip.className = 'row g-2';
   strip.id = 'summary-strip';
 
-  const tile = (label, value, extra) => {
+  // Delta chip: "<arrow> <pct>% vs <Month Year>" — rising spending is bad
+  // (danger), rising income is good (success). No baseline -> "no data".
+  const delta = (cur, prev, higherIsBad) => {
+    const el = document.createElement('div');
+    el.className = 'tile-delta';
+    if (!prev) {
+      el.classList.add('text-muted');
+      el.textContent = t('dash.compare.noBaseline');
+      return el;
+    }
+    const pct = ((cur - prev) / prev) * 100;
+    const up = pct > 0.05;
+    const down = pct < -0.05;
+    const good = higherIsBad ? down : up;
+    const bad = higherIsBad ? up : down;
+    el.classList.add(good ? 'text-success' : bad ? 'text-danger' : 'text-muted');
+    const arrow = up ? '▲' : down ? '▼' : '·';
+    el.textContent = `${arrow} ${Math.abs(pct).toFixed(1)}% ${t('dash.compare.vs')} ${monthLabel(prevKey)}`;
+    return el;
+  };
+
+  const tile = (label, value, extra, deltaEl) => {
     const col = document.createElement('div');
     col.className = 'col-6 col-md-4';
     const card = document.createElement('div');
@@ -687,22 +824,39 @@ function summaryStrip(income, expense) {
     val.className = `tile-value${extra ? ` ${extra}` : ''}`;
     val.textContent = value;
     card.append(lbl, val);
+    if (deltaEl) card.appendChild(deltaEl);
     col.appendChild(card);
     return col;
   };
 
-  strip.appendChild(tile(t('dash.income'), formatMoney(income, 'MYR')));
-  const expenseTile = tile(t('dash.spentLabel'), formatMoney(expense, 'MYR'));
+  strip.appendChild(
+    tile(
+      t('dash.income'),
+      formatMoney(current.income, 'MYR'),
+      null,
+      delta(current.income, previous.income, false),
+    ),
+  );
+  const expenseTile = tile(
+    t('dash.spentLabel'),
+    formatMoney(current.expense, 'MYR'),
+    null,
+    delta(current.expense, previous.expense, true),
+  );
   expenseTile.querySelector('.tile-value').id = 'total-myr';
   strip.appendChild(expenseTile);
-  const net = income - expense;
+  const net = current.income - current.expense;
   strip.appendChild(tile(t('dash.net'), formatMoney(net, 'MYR'), net >= 0 ? 'pos' : 'neg'));
-  return strip;
+
+  wrap.appendChild(strip);
+  return wrap;
 }
 
-// Month selector: ‹ / label / › plus a native month picker and a "This month"
-// reset. Changing the month re-renders from the already-loaded rows — the
-// history is fetched once per dashboard render, not per month.
+// Month selector: ‹ / clickable label (backed by a transparent native month
+// input) / › plus a "This month" reset that only appears when you're not
+// already on the current month. Changing the month re-renders from the
+// already-loaded rows — the history is fetched once per dashboard render, not
+// per month.
 function monthBar(month, onSelect) {
   const bar = document.createElement('div');
   bar.id = 'dash-month-bar';
@@ -720,73 +874,47 @@ function monthBar(month, onSelect) {
     return btn;
   };
 
-  const label = document.createElement('div');
+  // The visible label is a button-styled chip; the real <input type="month"> is
+  // overlaid transparently on top of it, so clicking the label opens the native
+  // picker (no separate control) and the `#month-picker` id survives for e2e.
+  const labelWrap = document.createElement('span');
+  labelWrap.className = 'month-label-wrap';
+
+  const label = document.createElement('span');
   label.id = 'dash-month-label';
-  label.className = 'fw-semibold px-1';
+  label.className = 'month-label';
   label.textContent = monthLabel(month);
+  labelWrap.appendChild(label);
 
   const picker = document.createElement('input');
   picker.type = 'month';
   picker.id = 'month-picker';
-  picker.className = 'form-control form-control-sm';
-  picker.style.maxWidth = '9.5rem';
+  picker.className = 'month-picker';
   picker.value = month;
   picker.setAttribute('aria-label', t('dash.monthJump'));
+  picker.title = t('dash.monthJump');
   picker.addEventListener('change', () => {
     if (/^\d{4}-\d{2}$/.test(picker.value)) onSelect(picker.value);
   });
-
-  const thisMonth = document.createElement('button');
-  thisMonth.type = 'button';
-  thisMonth.id = 'month-this';
-  thisMonth.className = 'btn btn-sm btn-link text-decoration-none';
-  thisMonth.textContent = t('dash.monthThis');
-  thisMonth.disabled = month === currentMonthKey();
-  thisMonth.addEventListener('click', () => onSelect(currentMonthKey()));
+  labelWrap.appendChild(picker);
 
   bar.append(
     navBtn('month-prev', t('dash.monthPrev'), '‹', -1),
-    label,
+    labelWrap,
     navBtn('month-next', t('dash.monthNext'), '›', 1),
-    picker,
-    thisMonth,
   );
+
+  // Only offer the reset when it would actually do something.
+  if (month !== currentMonthKey()) {
+    const thisMonth = document.createElement('button');
+    thisMonth.type = 'button';
+    thisMonth.id = 'month-this';
+    thisMonth.className = 'btn btn-sm btn-outline-secondary month-this';
+    thisMonth.textContent = t('dash.monthThis');
+    thisMonth.addEventListener('click', () => onSelect(currentMonthKey()));
+    bar.appendChild(thisMonth);
+  }
   return bar;
-}
-
-// Month-over-month deltas under the tiles: "vs October 2026 · Spent ▼ 12.3% ·
-// Income ▲ 4.0%". Rising spending is bad (danger), rising income is good
-// (success); a month with no spend/income baseline shows "no data" instead of a
-// divide-by-zero percentage.
-function comparisonLine(current, previous, prevKey) {
-  const line = document.createElement('div');
-  line.id = 'month-compare';
-  line.className = 'small text-muted mb-3 d-flex flex-wrap align-items-center gap-3';
-
-  const vs = document.createElement('span');
-  vs.textContent = `${t('dash.compare.vs')} ${monthLabel(prevKey)}`;
-  line.appendChild(vs);
-
-  const change = (label, cur, prev, higherIsBad) => {
-    const chip = document.createElement('span');
-    if (prev === 0) {
-      chip.textContent = `${label} — ${t('dash.compare.noBaseline')}`;
-      return chip;
-    }
-    const pct = ((cur - prev) / prev) * 100;
-    const up = pct > 0.05;
-    const down = pct < -0.05;
-    const good = higherIsBad ? down : up;
-    const bad = higherIsBad ? up : down;
-    chip.className = good ? 'text-success' : bad ? 'text-danger' : 'text-muted';
-    const arrow = up ? '▲' : down ? '▼' : '·';
-    chip.textContent = `${label} ${arrow} ${Math.abs(pct).toFixed(1)}%`;
-    return chip;
-  };
-
-  line.appendChild(change(t('dash.compare.spent'), current.expense, previous.expense, true));
-  line.appendChild(change(t('dash.compare.income'), current.income, previous.income, false));
-  return line;
 }
 
 // Part 6 — accounts overview row: per-account estimated balance (opening +
@@ -856,11 +984,22 @@ let homeRebuild = null;
 let homeThemeWatcherInstalled = false;
 
 const HOME_PALETTE = [
-  '#10b981', '#0ea5e9', '#f59e0b', '#8b5cf6', '#ef4444',
-  '#14b8a6', '#f97316', '#d946ef', '#84cc16', '#94a3b8',
+  '#10b981',
+  '#0ea5e9',
+  '#f59e0b',
+  '#8b5cf6',
+  '#ef4444',
+  '#14b8a6',
+  '#f97316',
+  '#d946ef',
+  '#84cc16',
+  '#94a3b8',
 ];
 
-async function homeOverview(root, { accounts, transactions, debits, myrTotals, categoryNames, trend }) {
+async function homeOverview(
+  root,
+  { accounts, transactions, debits, myrTotals, categoryNames, categoryColors = new Map(), trend },
+) {
   homeCharts.forEach((c) => c.destroy());
   homeCharts = [];
   homeRebuild = null;
@@ -898,26 +1037,31 @@ async function homeOverview(root, { accounts, transactions, debits, myrTotals, c
     visible.map(async (acc) => {
       const bal = estBalance(acc, transactions);
       if (bal <= 0) return null;
-      const myr = acc.currency === 'MYR'
-        ? bal
-        : await convert(bal, acc.currency, 'MYR').catch(() => null);
+      const myr =
+        acc.currency === 'MYR' ? bal : await convert(bal, acc.currency, 'MYR').catch(() => null);
       return myr === null ? null : { name: acc.name, myr: Math.round(myr * 100) / 100 };
     }),
   );
   const assetSlices = balanceRows.filter(Boolean);
 
-  // ---- category share: top 5 debits by MYR spend.
-  const sums = new Map();
+  // ---- category share: top 5 debits by MYR spend, each keyed by its category
+  // so it can carry that category's own colour.
+  const sums = new Map(); // key: category id, or '__unknown__'
   for (const tx of debits) {
     const myr = myrTotals.get(tx.id);
     if (myr === null || myr === undefined) continue;
-    const name = tx.category_id && categoryNames.get(tx.category_id)
-      ? categoryNames.get(tx.category_id)
-      : t('col.unknown');
-    sums.set(name, (sums.get(name) ?? 0) + myr);
+    const hasCat = tx.category_id && categoryNames.get(tx.category_id);
+    const key = hasCat ? tx.category_id : '__unknown__';
+    const entry = sums.get(key) ?? {
+      name: hasCat ? categoryNames.get(tx.category_id) : t('col.unknown'),
+      color: hasCat ? categoryColors.get(tx.category_id) : null,
+      value: 0,
+    };
+    entry.value += myr;
+    sums.set(key, entry);
   }
-  const ranked = [...sums.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const shareTotal = ranked.reduce((s, [, v]) => s + v, 0);
+  const ranked = [...sums.values()].sort((a, b) => b.value - a.value).slice(0, 5);
+  const shareTotal = ranked.reduce((s, e) => s + e.value, 0);
 
   // ---- trend: per-day debit spend for the selected month, zero-filled
   // across the month (day 1 → today for the current month).
@@ -931,28 +1075,38 @@ async function homeOverview(root, { accounts, transactions, debits, myrTotals, c
     empty.textContent = t('dash.noTrendData');
     shareBox.appendChild(empty);
   } else {
-    for (const [name, value] of ranked) {
+    ranked.forEach((entry, i) => {
+      const color = entry.color ?? HOME_PALETTE[i % HOME_PALETTE.length];
       const row = document.createElement('div');
       row.className = 'share-row';
       const top = document.createElement('div');
       top.className = 'share-top';
       const nm = document.createElement('span');
       nm.className = 'share-name';
-      nm.textContent = name;
+      const dot = document.createElement('span');
+      dot.className = 'share-dot';
+      dot.style.backgroundColor = color;
+      const nmText = document.createElement('span');
+      nmText.textContent = entry.name;
+      nm.append(dot, nmText);
+      const pct = document.createElement('span');
+      pct.className = 'share-pct';
+      pct.textContent = `${Math.round((entry.value / shareTotal) * 100)}%`;
       const amt = document.createElement('span');
       amt.className = 'share-amount';
-      amt.textContent = formatMoney(value, 'MYR');
-      top.append(nm, amt);
+      amt.textContent = formatMoney(entry.value, 'MYR');
+      top.append(nm, pct, amt);
       const bar = document.createElement('div');
       bar.className = 'progress share-bar';
       const fill = document.createElement('div');
       fill.className = 'progress-bar';
-      fill.style.width = `${Math.round((value / shareTotal) * 100)}%`;
+      fill.style.backgroundColor = color;
+      fill.style.width = `${Math.round((entry.value / shareTotal) * 100)}%`;
       fill.setAttribute('role', 'progressbar');
       bar.appendChild(fill);
       row.append(top, bar);
       shareBox.appendChild(row);
-    }
+    });
   }
 
   // ---- canvases: doughnut + trend. Built by one closure so a theme flip can

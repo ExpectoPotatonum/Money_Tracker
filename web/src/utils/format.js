@@ -32,9 +32,16 @@ export function currencyOptions() {
 }
 
 export function formatMoney(amount, currency) {
+  const n = Number(amount);
   const symbol = SYMBOLS[currency] ?? `${currency} `;
   const separator = /^[A-Za-z]{2,3}$/.test(symbol) ? ' ' : '';
-  return `${symbol}${separator}${Number(amount).toFixed(2)}`;
+  // Thousand separators + a fixed 2dp, and the sign goes BEFORE the symbol so a
+  // negative reads "-RM 1,181.69" — never "RM -1181.69" (owner request).
+  const digits = Math.abs(n).toLocaleString('en-MY', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${n < 0 ? '-' : ''}${symbol}${separator}${digits}`;
 }
 
 export function formatDateTime(iso) {

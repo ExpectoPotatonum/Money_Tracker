@@ -7,6 +7,7 @@ import {
 } from '../utils/format.js';
 import { confirmDelete } from './common.js';
 import { buildSourceEditor } from '../utils/sources.js';
+import { hexToRgba } from '../utils/colors.js';
 import { t as tr } from '../lib/i18n.js';
 
 const DIRECTIONS = ['debit', 'credit'];
@@ -37,6 +38,7 @@ function formatMerchantName(name) {
 export function transactionTable({
   transactions,
   categoryNames,
+  categoryColors = new Map(),
   myrTotals = new Map(),
   editMode = false,
   allTags = [],
@@ -52,7 +54,7 @@ export function transactionTable({
   onSetTags = null,
 }) {
   const table = document.createElement('table');
-  table.className = 'table table-sm table-striped align-middle';
+  table.className = 'table table-sm table-striped align-middle tx-table';
 
   const thead = document.createElement('thead');
   thead.innerHTML = `<tr>
@@ -60,8 +62,6 @@ export function transactionTable({
     <th>${tr('col.receiver')}</th>
     <th>${tr('col.category')}</th>
     <th class="text-end">${tr('col.amount')}</th>
-    <th class="text-end">${tr('col.myr')}</th>
-    <th>${tr('col.sentFrom')}</th>
     <th>${tr('col.account')}</th>
     <th>${tr('col.tags')}</th>
     <th>${tr('col.notes')}</th>
@@ -90,6 +90,8 @@ export function transactionTable({
   for (const t of transactions) {
     const tr = document.createElement('tr');
     tr.dataset.txId = t.id;
+    // Used by the Recent Transactions filter (category filter + text search).
+    tr.dataset.cat = t.category_id ?? '';
     const isTransfer = Boolean(t.transfer_group_id);
 
     if (isTransfer) {
@@ -99,30 +101,24 @@ export function transactionTable({
       // onDeleteTransfer (a per-cell delete would orphan the other half).
       tr.appendChild(dateCell(t));
       tr.appendChild(merchantCell(t));
-      tr.appendChild(categoryCell(t, categoryNames));
-      tr.appendChild(amountCell(t));
-      tr.appendChild(myrCell(t, myrTotals));
-      tr.appendChild(sourceCell(t));
-      tr.appendChild(accountCell(t, accounts, accountNames, transferPairs));
+      tr.appendChild(categoryCell(t, categoryNames, categoryColors));
+      tr.appendChild(amountCell(t, myrTotals));
+      tr.appendChild(accountSourceCell(t, accounts, accountNames, transferPairs));
       tr.appendChild(tagsCell(t));
       tr.appendChild(notesCell(t));
       tr.appendChild(
         actionCell({
           onDelete:
-            editMode && onDeleteTransfer
-              ? () => onDeleteTransfer(t.transfer_group_id)
-              : null,
+            editMode && onDeleteTransfer ? () => onDeleteTransfer(t.transfer_group_id) : null,
         }),
       );
     } else if (!editMode) {
       // --- Read-only row (today's appearance + a Notes column) ---
       tr.appendChild(dateCell(t));
       tr.appendChild(merchantCell(t));
-      tr.appendChild(categoryCell(t, categoryNames));
-      tr.appendChild(amountCell(t));
-      tr.appendChild(myrCell(t, myrTotals));
-      tr.appendChild(sourceCell(t));
-      tr.appendChild(accountCell(t, accounts, accountNames, transferPairs));
+      tr.appendChild(categoryCell(t, categoryNames, categoryColors));
+      tr.appendChild(amountCell(t, myrTotals));
+      tr.appendChild(accountSourceCell(t, accounts, accountNames, transferPairs));
       tr.appendChild(tagsCell(t));
       tr.appendChild(notesCell(t));
       tr.appendChild(actionCell());
@@ -139,9 +135,7 @@ export function transactionTable({
       tr.appendChild(merchantEditCell(draft, report));
       tr.appendChild(categoryEditCell(draft, categoryNames, report));
       tr.appendChild(amountEditCell(draft, report));
-      tr.appendChild(myrCell(t, myrTotals)); // MYR recomputed on refresh, not editable
-      tr.appendChild(sourceEditCell(draft, report));
-      tr.appendChild(accountEditCell(draft, accounts, report));
+      tr.appendChild(accountSourceEditCell(draft, accounts, report));
       tr.appendChild(tagsEditCell(t, allTags));
       tr.appendChild(notesEditCell(draft, report));
       tr.appendChild(
@@ -180,9 +174,10 @@ export function transactionTable({
     // Prefer the raw "Name/Bank" text when it carries a '/' combo (CIMB
     // DuitNow person+source-bank format): render it as "Name - Bank". Otherwise
     // fall back to the normalized display name. Edit mode still edits raw.
-    const display = (t.merchant_raw && t.merchant_raw.includes('/'))
-      ? formatMerchantName(t.merchant_raw)
-      : (t.merchant_display ?? t.merchant_raw ?? tr('col.unknown'));
+    const display =
+      t.merchant_raw && t.merchant_raw.includes('/')
+        ? formatMerchantName(t.merchant_raw)
+        : (t.merchant_display ?? t.merchant_raw ?? tr('col.unknown'));
     td.textContent = display;
     if (t.merchant_raw && t.merchant_display && t.merchant_raw !== t.merchant_display) {
       td.title = `matched from: ${t.merchant_raw}`;
@@ -190,7 +185,7 @@ export function transactionTable({
     return td;
   }
 
-  function categoryCell(t, cats) {
+  function categoryCell(t, cats, colors) {
     const td = document.createElement('td');
     td.dataset.col = 'category';
     // Halves carry no category (owner decision #4) and never show a picker.
@@ -199,7 +194,20 @@ export function transactionTable({
       return td;
     }
     if (t.category_id && cats.get(t.category_id)) {
-      td.textContent = cats.get(t.category_id);
+      // Tinted pill in the category's own colour (light wash behind the text).
+      const name = cats.get(t.category_id);
+      const color = colors?.get(t.category_id);
+      const pill = document.createElement('span');
+      pill.className = 'category-pill';
+      if (color) {
+        pill.style.color = color;
+        pill.style.backgroundColor = hexToRgba(color, 0.16);
+        pill.style.borderColor = hexToRgba(color, 0.35);
+      } else {
+        pill.classList.add('category-pill-neutral');
+      }
+      pill.textContent = name;
+      td.appendChild(pill);
       return td;
     }
     // No category: render an inline picker (read-only mode only) so the user
@@ -228,53 +236,33 @@ export function transactionTable({
     return td;
   }
 
-  function amountCell(t) {
+  // Amount cell: the original amount/currency, with a muted "≈ RM …" subtext
+  // ONLY for foreign-currency rows (the MYR column was dropped; MYR rows are
+  // already in RM so a subtext would be noise).
+  function amountCell(t, myr) {
     const td = document.createElement('td');
-    td.className = 'text-end';
-    td.textContent = formatMoney(t.amount, t.currency);
-    return td;
-  }
-
-  function myrCell(t, myr) {
-    const td = document.createElement('td');
-    td.className = 'text-end';
-    const val = myr.get(t.id);
-    td.textContent = val !== null && val !== undefined ? formatMoney(val, 'MYR') : '—';
-    return td;
-  }
-
-  function sourceCell(t) {
-    const td = document.createElement('td');
-    td.className = 'text-muted small';
-    // Halves are manual rows with no source label — a source here would imply
-    // a payment method, which a transfer isn't.
-    if (t.transfer_group_id) {
-      td.textContent = '—';
-      return td;
+    td.className = 'text-end amount-cell';
+    const val = document.createElement('div');
+    val.className = 'amount-main';
+    val.textContent = formatMoney(t.amount, t.currency);
+    td.appendChild(val);
+    if (t.currency !== 'MYR') {
+      const converted = myr.get(t.id);
+      const sub = document.createElement('div');
+      sub.className = 'amount-sub text-muted small';
+      sub.textContent =
+        converted !== null && converted !== undefined ? `≈ ${formatMoney(converted, 'MYR')}` : '—';
+      td.appendChild(sub);
     }
-    td.textContent = t.source_app_label ?? t.source_package;
     return td;
   }
 
-  function sourceEditCell(draft, report) {
-    const td = document.createElement('td');
-    td.appendChild(
-      buildSourceEditor(draft.source_app_label, {
-        allowEmpty: true,
-        onChange: (v) => {
-          draft.source_app_label = v ?? '';
-          report();
-        },
-      }),
-    );
-    return td;
-  }
-
-  // Read-only Account cell. Transfer halves show the pair "A → B" (both sides
-  // are discovered by the view and passed in via transferPairs); other rows
-  // show their single account, or — when unassigned — an inline picker that
-  // PATCHes immediately via onAssignAccount (mirror of the category picker).
-  function accountCell(t, accounts, accountNames, transferPairs) {
+  // Merged read-only "Account" cell (the old Sent-from + Account columns were
+  // near-duplicates). Transfers show the pair "A → B"; assigned rows show the
+  // account name (with the source label as a tooltip); unassigned rows show a
+  // muted source label plus an inline account picker that PATCHes immediately
+  // via onAssignAccount (mirror of the category picker).
+  function accountSourceCell(t, accounts, accountNames, transferPairs) {
     const td = document.createElement('td');
     td.dataset.col = 'account';
     if (t.transfer_group_id) {
@@ -288,7 +276,18 @@ export function transactionTable({
     }
     if (t.account_id && accountNames.get(t.account_id)) {
       td.textContent = accountNames.get(t.account_id);
+      const src = t.source_app_label ?? t.source_package;
+      if (src) td.title = `${tr('col.sentFrom')}: ${src}`;
       return td;
+    }
+    // Unassigned: the source label is the only signal we have, so keep it — as
+    // muted text above the picker.
+    const src = t.source_app_label ?? t.source_package;
+    if (src) {
+      const label = document.createElement('div');
+      label.className = 'text-muted small';
+      label.textContent = src;
+      td.appendChild(label);
     }
     if (onAssignAccount && accounts.length > 0) {
       const select = document.createElement('select');
@@ -308,18 +307,19 @@ export function transactionTable({
         if (select.value) onAssignAccount(t.id, select.value);
       });
       td.appendChild(select);
-    } else {
+    } else if (!src) {
       td.textContent = '—';
     }
     return td;
   }
 
-  // Edit-mode Account dropdown ("—" = Unassigned). Changes ride the batched
-  // PATCH that flushes when edit mode is toggled off.
-  function accountEditCell(draft, accounts, report) {
+  // Merged edit-mode cell: the account dropdown stacked over the source
+  // (payment-method) editor, so both PATCH paths stay reachable — the account
+  // via the batched PATCH, the source via the same batched PATCH.
+  function accountSourceEditCell(draft, accounts, report) {
     const td = document.createElement('td');
     const select = document.createElement('select');
-    select.className = 'form-select form-select-sm';
+    select.className = 'form-select form-select-sm mb-1';
     select.setAttribute('aria-label', tr('col.setAccount'));
     const empty = document.createElement('option');
     empty.value = '';
@@ -338,6 +338,15 @@ export function transactionTable({
       report();
     });
     td.appendChild(select);
+    td.appendChild(
+      buildSourceEditor(draft.source_app_label, {
+        allowEmpty: true,
+        onChange: (v) => {
+          draft.source_app_label = v ?? '';
+          report();
+        },
+      }),
+    );
     return td;
   }
 

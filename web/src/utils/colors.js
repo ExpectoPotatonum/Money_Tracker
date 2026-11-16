@@ -25,6 +25,16 @@ export function colorName(value) {
   return preset ? t(`colors.${preset.key}`) : t('colors.custom');
 }
 
+// `#rrggbb` -> `rgba(r,g,b,a)`, used for the tinted category pills (a light wash
+// of the category's own colour behind its name). Anything that isn't a plain
+// 6-digit hex falls back to the neutral grey so a bad value never breaks render.
+export function hexToRgba(hex, alpha = 1) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? '').trim());
+  if (!m) return `rgba(108, 117, 125, ${alpha})`;
+  const int = parseInt(m[1], 16);
+  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+}
+
 // A row of radio swatches + the selected colour's name. `onChange(value)`
 // receives '' for "no colour". Any non-preset existing value is kept as a
 // "Custom" swatch so editing an older account never silently loses its colour.
