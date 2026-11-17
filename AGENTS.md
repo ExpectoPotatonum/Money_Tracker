@@ -78,7 +78,7 @@ components/
   budgetManager.js   Overall + per-category budgets
   exportDialog.js    CSV export dialog — month + scope (all / spending / money in)
   settingsDialog.js  LLM key/model, language selector, change password
-  transactionTable.js  Transaction table (read-only + edit-mode cells; merged Account column, `≈ RM` subtext for foreign amounts, tinted category pills); rows carry data-tx-id / data-col / data-cat for targeted patching + filtering
+  transactionTable.js  Transaction table (read-only + edit-mode cells; merged Account column, `≈ <display currency>` subtext for amounts outside the dashboard's display currency, tinted category pills); rows carry data-tx-id / data-col / data-cat for targeted patching + filtering
 lib/
   i18n.js            t() function — en/zh-CN dictionary, locale from localStorage
   logger.js          IndexedDB-backed error log with rotation
@@ -100,7 +100,7 @@ utils/
   sources.js         source (payment-method) picker — presets + Custom text, shared by NL modal & edit mode
 views/
   authGate.js        Sign-in / sign-up / forgot-password forms
-  dashboard.js       Main month-scoped view, sticky header + icon buttons + animated edit-mode switch, Recent Transactions search/filter, in-memory targeted updates
+  dashboard.js       Main month-scoped view, sticky header + icon buttons + animated edit-mode switch, MYR⇄TWD display-currency toggle, Recent Transactions search/filter, in-memory targeted updates
   reports.js         #/reports — balance trends + charts (Chart.js loaded as a code-split chunk)
   reviewInbox.js     Failed/needs_review rows + per-row Ask AI escalation
   rawNotifications.js  #/raw — read-only paged raw_notifications audit log
@@ -375,7 +375,7 @@ A different failure mode from §10 — this is "captured fine, but no signal rig
 **In v1:**
 - Native app push notifications only.
 - One device, on a schema that already supports more.
-- MYR conversion happens in the web UI at display time, freezing the rate at each transaction's own date (ADR 0003); the database only ever stores original amount + currency.
+- MYR conversion happens in the web UI at display time, freezing the rate at each transaction's own date (ADR 0003); the database only ever stores original amount + currency. The dashboard's display currency defaults to MYR and can be switched to TWD from the month bar (ADR 0005) — the stored rows are untouched either way.
 
 **Explicitly deferred:**
 - Gmail / email receipts — notification text for email is a thin, truncated first line; if e-receipts matter later, the Gmail API (full message bodies) is a better source than the notification listener for this one channel specifically.
@@ -462,6 +462,14 @@ Still in scope despite the SMS/email exclusion: cross-app duplicate detection (�
   - **Sticky table headers**: `.tx-table thead th` is `position: sticky` for the Recent Transactions, Money in and Transfers tables. The dashboard publishes the sticky `.dash-header` height as **`--dash-header-h`** (via a per-render `ResizeObserver`, since the header wraps on narrow screens) so the header parks directly beneath it. The bottom rule is a box-shadow because `border-collapse: collapse` drops a sticky `th`'s own border.
   - **Dark-mode sidebar stays green**: `--mt-sidebar-bg` in `[data-bs-theme='dark']` is a **darker bee-green `#062e1f`** (was OLED `#000`), so the brand rail survives a theme flip while the content area still goes black.
   - **Copy trims**: the offline banner drops the `(agents.md §10)` citation; the Raw notifications hint drops the em-dash clause + `(AGENTS §16)` and reads "…Read-only, raw rows are never edited or deleted." (zh updated to match).
+
+- **Dashboard UI polish batch 4 (web, 2026-11-17; ADR `0005-dashboard-display-currency.md`)** — MYR⇄TWD display currency + true sidebar icon parity.
+  - **MYR⇄TWD display toggle** sits beside the month bar (`#display-currency-toggle`, `.currency-toggle`): both codes stay visible, the active one is emphasised, and a click swaps them. The selected code lives in `dashboard.js` (`displayCurrency` / `readDisplayCurrency()`) and persists in `localStorage` under **`mt_display_currency`**; anything unset or unrecognised falls back to **MYR**, so constraint 3 still holds by default. Flipping it re-renders from the already-loaded history (no refetch) and flushes pending edit-mode rows first — the same guard as a month switch.
+  - **What converts** (every figure, per row, at that row's own date — ADR 0003): summary tiles and their labels (`dash.incomeCur` / `dash.spentCur` / `dash.netCur`), the month-over-month deltas inside the tiles, the per-day trend, category share amounts, budget bars, asset composition, and the table's muted `≈ <display currency> …` subtext. `totalsFor(rows, quote)` builds the id-keyed map, rows already in the display currency short-circuit in `convert()`, and rows with no available rate still degrade to the original amount (counted in the "skipped" banner via `dash.skippedCur`).
+  - **Budget limits are the exception**: they're stored in MYR, so in TWD mode the limit is converted at the **latest** rate (a "now" snapshot) while spend stays frozen per transaction date — the percentage bar is therefore approximate, not auditable.
+  - **Deliberately not converted**: CSV export keeps its dedicated always-MYR column, account balance chips keep each account's real currency, and the Reports view stays MYR.
+  - `#total-myr` keeps its id on the SPENT tile in both modes (it identifies the figure, not a unit) so the pre-existing e2e assertions keep passing. New e2e: "the month-bar currency toggle converts dashboard totals between MYR and TWD" in `web/tests/dashboard.spec.js`.
+  - **Sidebar icons are now pixel-identical collapsed vs expanded.** Previously collapsed labels used `display: none`, which also removed their line boxes: every row shrank (brand 42.2 → 35, nav/footer 40 → 34, sub-item 33.3 → 27.2) and the icons drifted **upwards row by row** (by the 4th nav item the icon was 25px off), so the icon column was never parallel between the two states. The collapsed labels are now hidden with **`visibility: hidden`**, which keeps the line box — every row keeps its expanded height, so each icon's x *and* y stay fixed while only the rail width animates. The rail also keeps the expanded **left** padding (0.8rem) and link padding (0.9rem) in both states and only reclaims the right side, and the hamburger has no collapsed override, so nothing slides horizontally either. Sub-item glyphs are 16px (nav glyphs 18px), so they get 1px side margins to centre them on the same icon axis and put their labels on the nav-label axis. Mobile (≤991.98px) restores `visibility: visible` with the rest of the top-bar rules. Verified with a scripted geometry dump: every sidebar rect's `x`, `y` and `h` matches collapsed vs expanded; only `width` changes.
 
 - **`parser_templates` regression harness is load-bearing** — `supabase/scripts/replay-templates.ts` replays every stored `sample_input` against its `body_pattern` through the pure `functions/parse-notification/parser.ts` and fails on any regression ("fixed HLB, broke TnG"). It runs in `supabase.yml` CI (`deno run --allow-read --allow-env scripts/replay-templates.ts`) and is a PR-checklist item. `fixtures/templates.json` now carries **real sanitized captures for every active live template** (TnG v1–v7, CIMB v1/v3, Samsung v1, Wise v1) with the matching `sample_title` (needed because the harness passes the title through and a null title fails a title-gated template). **Caveats:** (a) the fixture file uses JS named groups + `\s` while the live PL/pgSQL templates use positional groups + `field_map` + `[[:space:]]`, so DB rows are not a drop-in — keep the two in sync; (b) deactivated CIMB v2 is deliberately omitted; (c) the live `reject_pattern` (marketing/reward guard) is a SQL-only pre-check that `parser.ts` does not implement.
 

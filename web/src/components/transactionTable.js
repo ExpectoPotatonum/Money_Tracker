@@ -40,7 +40,8 @@ export function transactionTable({
   transactions,
   categoryNames,
   categoryColors = new Map(),
-  myrTotals = new Map(),
+  displayTotals = new Map(),
+  displayCurrency = 'MYR',
   editMode = false,
   allTags = [],
   accounts = [],
@@ -103,7 +104,7 @@ export function transactionTable({
       tr.appendChild(dateCell(t));
       tr.appendChild(merchantCell(t));
       tr.appendChild(categoryCell(t, categoryNames, categoryColors));
-      tr.appendChild(amountCell(t, myrTotals));
+      tr.appendChild(amountCell(t, displayTotals));
       tr.appendChild(accountSourceCell(t, accounts, accountNames, transferPairs));
       tr.appendChild(tagsCell(t));
       tr.appendChild(notesCell(t));
@@ -118,7 +119,7 @@ export function transactionTable({
       tr.appendChild(dateCell(t));
       tr.appendChild(merchantCell(t));
       tr.appendChild(categoryCell(t, categoryNames, categoryColors));
-      tr.appendChild(amountCell(t, myrTotals));
+      tr.appendChild(amountCell(t, displayTotals));
       tr.appendChild(accountSourceCell(t, accounts, accountNames, transferPairs));
       tr.appendChild(tagsCell(t));
       tr.appendChild(notesCell(t));
@@ -237,22 +238,24 @@ export function transactionTable({
     return td;
   }
 
-  // Amount cell: the original amount/currency, with a muted "≈ RM …" subtext
-  // ONLY for foreign-currency rows (the MYR column was dropped; MYR rows are
-  // already in RM so a subtext would be noise).
-  function amountCell(t, myr) {
+  // Amount cell: the original amount/currency, with a muted "≈ <display> …"
+  // subtext ONLY for rows in a different currency than the dashboard's current
+  // display currency (rows already in it need no conversion hint).
+  function amountCell(t, totals) {
     const td = document.createElement('td');
     td.className = 'text-end amount-cell';
     const val = document.createElement('div');
     val.className = 'amount-main';
     val.textContent = formatMoney(t.amount, t.currency);
     td.appendChild(val);
-    if (t.currency !== 'MYR') {
-      const converted = myr.get(t.id);
+    if (t.currency !== displayCurrency) {
+      const converted = totals.get(t.id);
       const sub = document.createElement('div');
       sub.className = 'amount-sub text-muted small';
       sub.textContent =
-        converted !== null && converted !== undefined ? `≈ ${formatMoney(converted, 'MYR')}` : '—';
+        converted !== null && converted !== undefined
+          ? `≈ ${formatMoney(converted, displayCurrency)}`
+          : '—';
       td.appendChild(sub);
     }
     return td;

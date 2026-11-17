@@ -33,6 +33,22 @@ import { icon } from '../utils/icons.js';
 
 const OFFLINE_AFTER_HOURS = 6;
 
+// Dashboard display currency. The DB keeps each transaction's original amount
+// and currency; every figure here is converted at display time to whichever of
+// these two the owner has selected. MYR stays the default (constraint 3).
+const DISPLAY_CURRENCY_KEY = 'mt_display_currency';
+const DISPLAY_CURRENCIES = ['MYR', 'TWD'];
+function readDisplayCurrency() {
+  try {
+    const saved = localStorage.getItem(DISPLAY_CURRENCY_KEY);
+    return DISPLAY_CURRENCIES.includes(saved) ? saved : 'MYR';
+  } catch {
+    return 'MYR';
+  }
+}
+let displayCurrency = readDisplayCurrency();
+const curText = (key) => t(key).replace('{currency}', displayCurrency);
+
 // The selected calendar month (`YYYY-MM`). `null` means "current month, MYT" —
 // resolved on first render and kept across re-renders so an edit or a refresh
 // doesn't jump back to today's month.
@@ -68,42 +84,44 @@ const UNKNOWN_COLOR = '#64748b';
 // ------------------------------ calendar-month helpers (Malaysia time)
 // Month boundaries live in utils/months.js — shared with the CSV export dialog.
 
-// MYR conversion + income/expense totals for one set of rows. The Map is keyed
-// by transaction id so the table/CSV/share strip reuse the same conversions.
-async function totalsFor(rows) {
-  const myrTotals = new Map();
+// Display-currency conversion + income/expense totals for one set of rows. The
+// Map is keyed by transaction id so the table/CSV/share strip reuse the same
+// conversions. Rows already in the display currency short-circuit in convert();
+// foreign rows freeze the rate at their own transaction date (ADR 0003).
+async function totalsFor(rows, quote = displayCurrency) {
+  const displayTotals = new Map();
   let income = 0;
   let expense = 0;
   let skipped = 0;
 
   const results = await Promise.allSettled(
     rows.map((r) =>
-      r.currency === 'MYR'
+      r.currency === quote
         ? Promise.resolve(Number(r.amount))
-        : convert(Number(r.amount), r.currency, 'MYR', r.transaction_date),
+        : convert(Number(r.amount), r.currency, quote, r.transaction_date),
     ),
   );
 
   rows.forEach((r, i) => {
-    const myr = results[i].status === 'fulfilled' ? results[i].value : null;
+    const value = results[i].status === 'fulfilled' ? results[i].value : null;
     const isSpend = r.direction === 'debit' && !r.transfer_group_id;
     const isIncome = r.direction === 'credit' && !r.transfer_group_id;
-    if (myr === null) {
+    if (value === null) {
       if (isSpend) skipped += 1;
-      myrTotals.set(r.id, null);
+      displayTotals.set(r.id, null);
       return;
     }
-    myrTotals.set(r.id, myr);
-    if (isSpend) expense += myr;
-    else if (isIncome) income += myr;
+    displayTotals.set(r.id, value);
+    if (isSpend) expense += value;
+    else if (isIncome) income += value;
   });
 
-  return { myrTotals, income, expense, skipped };
+  return { displayTotals, income, expense, skipped };
 }
 
 // Per-day debit spend for the selected month, zero-filled from day 1 through
 // today (current month) or the month's last day (past/future months).
-function buildTrend(rows, myrTotals, key) {
+function buildTrend(rows, displayTotals, key) {
   const { year, month } = parseMonthKey(key);
   const isCurrent = key === currentMonthKey();
   const count = isCurrent ? mytNow().getUTCDate() : daysInMonth(key);
@@ -112,11 +130,11 @@ function buildTrend(rows, myrTotals, key) {
   const byDay = new Map();
   for (const r of rows) {
     if (r.direction !== 'debit' || r.transfer_group_id) continue;
-    const myr = myrTotals.get(r.id);
-    if (myr === null || myr === undefined) continue;
+    const value = displayTotals.get(r.id);
+    if (value === null || value === undefined) continue;
     const day = mytDateKey(r.transaction_date);
     if (!day) continue;
-    byDay.set(day, (byDay.get(day) ?? 0) + myr);
+    byDay.set(day, (byDay.get(day) ?? 0) + value);
   }
 
   const days = [];
@@ -294,26 +312,28 @@ async function renderLoaded(root, data) {
     );
   }
 
-  // Every transaction converted to MYR at display time (constraint 3 — the DB
-  // only ever stores original amount + currency). The rate is frozen at the
-  // transaction's own date (ADR 0003) so past rows don't drift as live rates
-  // move; rows whose historical rate is unavailable fall back to showing the
-  // original amount, never to hiding.
+  // Every transaction converted to the DISPLAY currency at display time
+  // (constraint 3 — the DB only ever stores original amount + currency). The
+  // rate is frozen at the transaction's own date (ADR 0003) so past rows don't
+  // drift as live rates move; rows whose historical rate is unavailable fall
+  // back to showing the original amount, never to hiding.
   //
   // Transfers (two-row linked pairs) are excluded from the spending/income
   // tables AND the totals — moving money between own accounts isn't spending.
-  // The halves still go through the MYR conversion below so the CSV export has
-  // a MYR figure for every row, transfers included.
+  // The halves still go through the conversion below so the table can show a
+  // converted figure for every row, transfers included. CSV export has its own
+  // always-MYR column, independent of this display toggle.
   const debits = transactions.filter((t) => t.direction === 'debit' && !t.transfer_group_id);
   const credits = transactions.filter((t) => t.direction === 'credit' && !t.transfer_group_id);
   const transfers = transactions.filter((t) => t.transfer_group_id);
 
   // Month figures + the month-before figures (for the comparison line under
-  // the tiles). Both go through the same FX-at-tx-date helper.
+  // the tiles). Both go through the same FX-at-tx-date helper, using whichever
+  // currency the header toggle currently selects.
   const stats = await totalsFor(transactions);
   const prevMonth = shiftMonthKey(month, -1);
   const prevStats = await totalsFor(monthRows(allTransactions, prevMonth));
-  const trend = buildTrend(transactions, stats.myrTotals, month);
+  const trend = buildTrend(transactions, stats.displayTotals, month);
 
   const rerender = async (key) => {
     // Leaving edit mode mid-switch would drop accumulated edits — save first
@@ -377,7 +397,20 @@ async function renderLoaded(root, data) {
   });
   syncEditBtn();
   left.append(h, addBtn, transferBtn(accounts), editBtn);
-  header.append(left, monthBar(month, rerender));
+  const changeCurrency = async (next) => {
+    // Same guard as a month switch: never rebuild the view on top of unsaved
+    // edits. On a failed save the currency stays where it was.
+    if (editMode && !(await flushDirty())) return;
+    if (!DISPLAY_CURRENCIES.includes(next) || next === displayCurrency) return;
+    displayCurrency = next;
+    try {
+      localStorage.setItem(DISPLAY_CURRENCY_KEY, next);
+    } catch {
+      // localStorage unavailable — the toggle still works for this page load.
+    }
+    await renderLoaded(root, data);
+  };
+  header.append(left, monthBar(month, rerender, displayCurrency, changeCurrency));
   root.appendChild(header);
 
   // Sticky table headers sit below the sticky `.dash-header`. Publish its height
@@ -413,7 +446,8 @@ async function renderLoaded(root, data) {
       accounts,
       transactions: allTransactions,
       debits,
-      myrTotals: stats.myrTotals,
+      displayTotals: stats.displayTotals,
+      displayCurrency,
       categoryNames,
       categoryColors,
       trend,
@@ -427,7 +461,7 @@ async function renderLoaded(root, data) {
     root.appendChild(
       alertBanner({
         type: 'info',
-        message: `${stats.skipped} ${t('dash.skippedSuffix')}`,
+        message: `${stats.skipped} ${curText('dash.skippedCur')}`,
       }),
     );
   }
@@ -436,7 +470,9 @@ async function renderLoaded(root, data) {
   // from the SAME month rows as the tiles — no extra fetch, and switching the
   // month switches the budget spend with it.
   if (budgets.length > 0) {
-    root.appendChild(await budgetsSection(budgets, transactions, month, categoryTree));
+    root.appendChild(
+      await budgetsSection(budgets, transactions, month, categoryTree, displayCurrency),
+    );
   }
 
   if (debits.length === 0 && credits.length === 0 && transfers.length === 0) {
@@ -454,7 +490,8 @@ async function renderLoaded(root, data) {
     accounts,
     accountNames,
     transferPairs,
-    myrTotals: stats.myrTotals,
+    displayTotals: stats.displayTotals,
+    displayCurrency,
     editMode,
     onDirty: (id, patch) => {
       if (patch) dirtyRows.set(id, patch);
@@ -732,9 +769,9 @@ function transferBtn(accountList) {
 // spend (decision 3). Read-only, computed at display time; over-budget bars
 // turn danger-coloured. Spend comes from the SAME month rows as the tiles, so
 // the section follows the month selector without another fetch.
-async function budgetsSection(budgets, monthTxns, month, categoryTree = null) {
+async function budgetsSection(budgets, monthTxns, month, categoryTree = null, quote = 'MYR') {
   const tree = categoryTree ?? (await getCategoryTree());
-  const rows = await computeBudgetSpend(budgets, tree, monthTxns);
+  const rows = await computeBudgetSpend(budgets, tree, monthTxns, quote);
 
   const box = document.createElement('div');
   box.id = 'budgets-section';
@@ -757,7 +794,7 @@ async function budgetsSection(budgets, monthTxns, month, categoryTree = null) {
     name.textContent = r.label;
     const meta = document.createElement('span');
     meta.className = over ? 'text-danger fw-semibold' : 'text-muted';
-    meta.textContent = `${formatMoney(r.spent, 'MYR')} / ${formatMoney(r.amount, 'MYR')}`;
+    meta.textContent = `${formatMoney(r.spent, quote)} / ${formatMoney(r.amount, quote)}`;
     top.append(name, meta);
     const bar = document.createElement('div');
     bar.className = 'progress';
@@ -775,10 +812,11 @@ async function budgetsSection(budgets, monthTxns, month, categoryTree = null) {
 }
 
 // Compute spend per budget for the selected month. Debits only, transfers
-// excluded, every amount converted to MYR at its own date (ADR 0003).
-// `ids = null` means the overall budget (all debits); otherwise the category +
-// descendants.
-async function computeBudgetSpend(budgets, tree, txns) {
+// excluded, every amount converted to the display currency at its own date
+// (ADR 0003). Budget limits are stored in MYR, so they use the latest rate when
+// the dashboard is showing TWD. `ids = null` means the overall budget (all
+// debits); otherwise the category + descendants.
+async function computeBudgetSpend(budgets, tree, txns, quote = 'MYR') {
   const childrenOf = new Map();
   for (const c of tree) {
     if (!c.parent_id) continue;
@@ -803,26 +841,32 @@ async function computeBudgetSpend(budgets, tree, txns) {
   const debits = txns.filter((tx) => tx.direction === 'debit' && !tx.transfer_group_id);
   const converted = await Promise.allSettled(
     debits.map((tx) =>
-      tx.currency === 'MYR'
+      tx.currency === quote
         ? Promise.resolve(Number(tx.amount))
-        : convert(Number(tx.amount), tx.currency, 'MYR', tx.transaction_date),
+        : convert(Number(tx.amount), tx.currency, quote, tx.transaction_date),
     ),
+  );
+  const limits = await Promise.all(
+    budgets.map(async (b) => {
+      const value = await convert(Number(b.amount), 'MYR', quote).catch(() => null);
+      return value === null ? Number(b.amount) : value;
+    }),
   );
   const names = new Map(tree.map((c) => [c.id, c.name]));
 
-  return budgets.map((b) => {
+  return budgets.map((b, i) => {
     const ids = b.category_id ? descendantSet(b.category_id) : null;
     let spent = 0;
     for (let j = 0; j < debits.length; j++) {
       const tx = debits[j];
       if (ids && !(tx.category_id && ids.has(tx.category_id))) continue;
-      const myr = converted[j].status === 'fulfilled' ? converted[j].value : null;
-      if (myr === null) continue;
-      spent += myr;
+      const value = converted[j].status === 'fulfilled' ? converted[j].value : null;
+      if (value === null) continue;
+      spent += value;
     }
     return {
       label: b.category_id ? (names.get(b.category_id) ?? t('col.unknown')) : t('budgets.overall'),
-      amount: Number(b.amount),
+      amount: limits[i],
       spent: Math.round(spent * 100) / 100,
     };
   });
@@ -880,7 +924,7 @@ function summaryStrip(current, previous, prevKey) {
     const down = diff < -0.005;
     el.classList.add(up ? 'text-success' : down ? 'text-danger' : 'text-muted');
     const arrow = up ? '▲' : down ? '▼' : '·';
-    el.textContent = `${arrow} ${formatMoney(Math.abs(diff), 'MYR')} ${t('dash.compare.vs')} ${monthLabel(prevKey)}`;
+    el.textContent = `${arrow} ${formatMoney(Math.abs(diff), displayCurrency)} ${t('dash.compare.vs')} ${monthLabel(prevKey)}`;
     return el;
   };
 
@@ -903,23 +947,30 @@ function summaryStrip(current, previous, prevKey) {
 
   strip.appendChild(
     tile(
-      t('dash.income'),
-      formatMoney(current.income, 'MYR'),
+      curText('dash.incomeCur'),
+      formatMoney(current.income, displayCurrency),
       null,
       delta(current.income, previous.income, false),
     ),
   );
   const expenseTile = tile(
-    t('dash.spentLabel'),
-    formatMoney(current.expense, 'MYR'),
+    curText('dash.spentCur'),
+    formatMoney(current.expense, displayCurrency),
     null,
     delta(current.expense, previous.expense, true),
   );
+  // The id stays `#total-myr` for the existing e2e assertions even when the
+  // displayed currency is TWD — it identifies the "spent" figure, not a unit.
   expenseTile.querySelector('.tile-value').id = 'total-myr';
   strip.appendChild(expenseTile);
   const net = current.income - current.expense;
   strip.appendChild(
-    tile(t('dash.net'), formatMoney(net, 'MYR'), net >= 0 ? 'pos' : 'neg', netDelta(net, previous)),
+    tile(
+      curText('dash.netCur'),
+      formatMoney(net, displayCurrency),
+      net >= 0 ? 'pos' : 'neg',
+      netDelta(net, previous),
+    ),
   );
 
   wrap.appendChild(strip);
@@ -927,11 +978,11 @@ function summaryStrip(current, previous, prevKey) {
 }
 
 // Month selector: ‹ / clickable label (backed by a transparent native month
-// input) / › plus a "This month" reset that only appears when you're not
-// already on the current month. Changing the month re-renders from the
-// already-loaded rows — the history is fetched once per dashboard render, not
-// per month.
-function monthBar(month, onSelect) {
+// input) / › plus the MYR⇄TWD display-currency toggle beside it and a "This
+// month" reset that only appears when you're not already on the current month.
+// Changing either re-renders from the already-loaded rows — the history is
+// fetched once per dashboard render, not per month/currency.
+function monthBar(month, onSelect, currency, onCurrencyChange) {
   const bar = document.createElement('div');
   bar.id = 'dash-month-bar';
   bar.className = 'd-flex flex-wrap align-items-center gap-2';
@@ -977,6 +1028,29 @@ function monthBar(month, onSelect) {
     labelWrap,
     navBtn('month-next', t('dash.monthNext'), '›', 1),
   );
+
+  // Display-currency toggle. Both codes are visible with the active one
+  // highlighted, so it reads as a two-way switch rather than a mystery button.
+  const curBtn = document.createElement('button');
+  curBtn.type = 'button';
+  curBtn.id = 'display-currency-toggle';
+  curBtn.className = 'currency-toggle';
+  curBtn.setAttribute('aria-label', t('dash.displayCurrency'));
+  curBtn.title = t('dash.displayCurrency');
+  const option = (code) => {
+    const el = document.createElement('span');
+    el.className = `currency-option${code === currency ? ' is-active' : ''}`;
+    el.dataset.currency = code;
+    el.textContent = code;
+    return el;
+  };
+  const swap = document.createElement('span');
+  swap.className = 'currency-swap';
+  swap.setAttribute('aria-hidden', 'true');
+  swap.textContent = '⇄';
+  curBtn.append(option('MYR'), swap, option('TWD'));
+  curBtn.addEventListener('click', () => onCurrencyChange(currency === 'MYR' ? 'TWD' : 'MYR'));
+  bar.appendChild(curBtn);
 
   // Only offer the reset when it would actually do something.
   if (month !== currentMonthKey()) {
@@ -1082,7 +1156,16 @@ const HOME_PALETTE = [
 
 async function homeOverview(
   root,
-  { accounts, transactions, debits, myrTotals, categoryNames, categoryColors = new Map(), trend },
+  {
+    accounts,
+    transactions,
+    debits,
+    displayTotals,
+    displayCurrency,
+    categoryNames,
+    categoryColors = new Map(),
+    trend,
+  },
 ) {
   homeCharts.forEach((c) => c.destroy());
   homeCharts = [];
@@ -1113,27 +1196,29 @@ async function homeOverview(
   const trendBox = panel(t('dash.trend'));
   root.appendChild(wrap);
 
-  // ---- asset composition: visible accounts, balances to MYR (MYR short-
-  // circuits in convert(); non-MYR balances use the latest rate — a balance
-  // snapshot is a "now" view, per ADR 0001).
+  // ---- asset composition: visible accounts, balances to the display currency
+  // (same-currency short-circuits in convert(); others use the latest rate — a
+  // balance snapshot is a "now" view, per ADR 0001).
   const visible = accounts.filter((a) => !a.is_hidden);
   const balanceRows = await Promise.all(
     visible.map(async (acc) => {
       const bal = estBalance(acc, transactions);
       if (bal <= 0) return null;
-      const myr =
-        acc.currency === 'MYR' ? bal : await convert(bal, acc.currency, 'MYR').catch(() => null);
-      return myr === null ? null : { name: acc.name, myr: Math.round(myr * 100) / 100 };
+      const value =
+        acc.currency === displayCurrency
+          ? bal
+          : await convert(bal, acc.currency, displayCurrency).catch(() => null);
+      return value === null ? null : { name: acc.name, value: Math.round(value * 100) / 100 };
     }),
   );
   const assetSlices = balanceRows.filter(Boolean);
 
-  // ---- category share: top 5 debits by MYR spend, each keyed by its category
-  // so it can carry that category's own colour.
+  // ---- category share: top 5 debits by display-currency spend, each keyed by
+  // its category so it can carry that category's own colour.
   const sums = new Map(); // key: category id, or '__unknown__'
   for (const tx of debits) {
-    const myr = myrTotals.get(tx.id);
-    if (myr === null || myr === undefined) continue;
+    const value = displayTotals.get(tx.id);
+    if (value === null || value === undefined) continue;
     const hasCat = tx.category_id && categoryNames.get(tx.category_id);
     const key = hasCat ? tx.category_id : '__unknown__';
     const entry = sums.get(key) ?? {
@@ -1142,7 +1227,7 @@ async function homeOverview(
       unknown: !hasCat,
       value: 0,
     };
-    entry.value += myr;
+    entry.value += value;
     sums.set(key, entry);
   }
   const ranked = [...sums.values()].sort((a, b) => b.value - a.value).slice(0, 5);
@@ -1199,7 +1284,7 @@ async function homeOverview(
       pct.textContent = `${Math.round((entry.value / shareTotal) * 100)}%`;
       const amt = document.createElement('span');
       amt.className = 'share-amount';
-      amt.textContent = formatMoney(entry.value, 'MYR');
+      amt.textContent = formatMoney(entry.value, displayCurrency);
       top.append(nm, pct, amt);
       const bar = document.createElement('div');
       bar.className = 'progress share-bar';
@@ -1239,7 +1324,7 @@ async function homeOverview(
             labels: assetSlices.map((s) => s.name),
             datasets: [
               {
-                data: assetSlices.map((s) => s.myr),
+                data: assetSlices.map((s) => s.value),
                 backgroundColor: assetSlices.map((_, i) => HOME_PALETTE[i % HOME_PALETTE.length]),
                 borderWidth: 2,
               },

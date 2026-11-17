@@ -91,7 +91,7 @@ function renderSidebar() {
     a.href = href;
     a.className = `nav-link ${currentView() === view ? 'active' : ''}`;
     // data-tip drives the collapsed-rail tooltip; aria-label keeps the
-    // accessible name once the text label is display:none.
+    // accessible name once the text label is clipped out of the rail.
     a.dataset.tip = label;
     a.setAttribute('aria-label', label);
     a.appendChild(icon(iconName, { size: 18 }));

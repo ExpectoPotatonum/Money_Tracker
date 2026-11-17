@@ -782,3 +782,41 @@ test('accounts manager lists accounts, adds one, and assigns an unassigned packa
   await expect.poll(() => accountPosts.length).toBe(1);
   expect(accountPosts[0]).toContain('"name":"GrabPay"');
 });
+
+test('the month-bar currency toggle converts dashboard totals between MYR and TWD', async ({
+  page,
+}) => {
+  await openDashboard(page);
+  await expect(page.locator('#total-myr')).toHaveText('RM 68.00');
+
+  // Registered after openDashboard so this overrides the default FX mock (last
+  // route wins). 68 MYR at 8 = 544 TWD; the 10 USD row needs its own rate.
+  await page.route('**/api.frankfurter.dev/**', (route) => {
+    const url = new URL(route.request().url());
+    const base = url.searchParams.get('base') ?? 'USD';
+    const quote = url.searchParams.get('quotes') ?? 'MYR';
+    const rates = { USD_MYR: 4.5, MYR_TWD: 8, USD_TWD: 36 };
+    return route.fulfill({
+      json: [{ date: '2026-08-28', base, quote, rate: rates[`${base}_${quote}`] ?? 1 }],
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  await page.reload();
+
+  const toggle = page.locator('#display-currency-toggle');
+  await expect(toggle.locator('.currency-option.is-active')).toHaveText('MYR');
+  await toggle.click();
+
+  await expect(page.locator('#total-myr')).toHaveText('NT$544.00');
+  await expect(page.locator('.tile-label')).toHaveText([
+    'Income (TWD)',
+    'Spent (TWD)',
+    'Net (TWD)',
+  ]);
+  await expect(toggle.locator('.currency-option.is-active')).toHaveText('TWD');
+  expect(await page.evaluate(() => localStorage.getItem('mt_display_currency'))).toBe('TWD');
+
+  // The choice survives a reload — it is not just an in-memory render flag.
+  await page.reload();
+  await expect(page.locator('#total-myr')).toHaveText('NT$544.00');
+});
