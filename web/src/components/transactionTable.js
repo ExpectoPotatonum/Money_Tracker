@@ -8,6 +8,7 @@ import {
 import { confirmDelete } from './common.js';
 import { buildSourceEditor } from '../utils/sources.js';
 import { hexToRgba } from '../utils/colors.js';
+import { icon } from '../utils/icons.js';
 import { t as tr } from '../lib/i18n.js';
 
 const DIRECTIONS = ['debit', 'credit'];
@@ -560,28 +561,24 @@ export function transactionTable({
     if (onToggleRecurring) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'btn btn-sm btn-link p-0 border-0';
+      btn.className = 'btn btn-sm p-0 border-0 row-action-btn';
       btn.setAttribute('aria-label', tr('col.recurringAdd'));
       btn.title = isRecurring ? tr('col.recurringRemove') : tr('col.recurringAdd');
-      btn.textContent = '🔁';
-      btn.style.opacity = isRecurring ? '1' : '0.3';
-      btn.style.fontSize = '16px';
+      // Inline SVG (matches the other row/action icons) instead of the 🔁 emoji;
+      // the "on" state is carried by a class rather than an inline opacity.
+      btn.classList.toggle('is-on', Boolean(isRecurring));
+      btn.appendChild(icon('repeat', { size: 16 }));
       btn.addEventListener('click', () => onToggleRecurring());
       td.appendChild(btn);
     }
     if (onDelete) {
       const del = document.createElement('button');
       del.type = 'button';
-      del.className = 'btn btn-sm btn-link p-0 border-0';
+      del.className = 'btn btn-sm p-0 border-0 row-action-btn row-action-danger';
       del.setAttribute('aria-label', tr('col.delete'));
       del.title = tr('col.delete');
-      const img = document.createElement('img');
-      img.src = '/red-cross-mark.png';
-      img.alt = '';
-      img.className = 'd-block';
-      img.style.width = '22px';
-      img.style.height = '22px';
-      del.appendChild(img);
+      // Inline SVG trash, replacing the app's last raster icon (red-cross-mark.png).
+      del.appendChild(icon('trash', { size: 16 }));
       del.addEventListener('click', () => {
         if (confirmDelete()) onDelete();
       });

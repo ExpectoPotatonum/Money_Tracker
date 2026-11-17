@@ -26,6 +26,7 @@ import { alertBanner } from '../components/common.js';
 import { transactionTable } from '../components/transactionTable.js';
 import { openNlModal } from '../components/nlModal.js';
 import { openTransferDialog } from '../components/transferDialog.js';
+import { openAccountManager } from '../components/accountManager.js';
 import { getTagGroups, setTransactionTags } from '../api/tags.js';
 import { t } from '../lib/i18n.js';
 import { icon } from '../utils/icons.js';
@@ -51,6 +52,18 @@ let currentRoot = null;
 const dirtyRows = new Map();
 let hashchangeGuardInstalled = false;
 let dataChangedListenerInstalled = false;
+
+// Tracks the sticky `.dash-header` height (published as `--dash-header-h` so the
+// sticky table headers can park underneath it). Recreated per render.
+let headerResizeObserver = null;
+
+// Clicking the "Unknown" slice in Category share filters the table to rows with
+// no category. Wired in recentTransactions (which owns the filter control),
+// invoked from homeOverview — reset each render so a stale setter can't fire.
+let filterUnknown = null;
+// Muted slate for the uncategorized bucket: it should read as "needs
+// categorizing", not as the brand green the home palette would assign it.
+const UNKNOWN_COLOR = '#64748b';
 
 // ------------------------------ calendar-month helpers (Malaysia time)
 // Month boundaries live in utils/months.js — shared with the CSV export dialog.
@@ -128,7 +141,18 @@ export async function renderDashboard(root) {
     const scroll = window.scrollY;
     const active = document.activeElement;
     const focusId = active && active.id ? active.id : null;
-    await renderLoaded(root, loaded);
+    // Pin the view's height while it is rebuilt in place. `renderLoaded` empties
+    // the root first and then awaits FX/chart work, so without this the document
+    // collapses to the header for a frame and the browser clamps the scroll to
+    // the top — the "toggling edit mode jumps the page" bug. Restoring the same
+    // numeric scrollY afterwards then lands back where the user was.
+    const prevMinHeight = root.style.minHeight;
+    root.style.minHeight = `${root.offsetHeight}px`;
+    try {
+      await renderLoaded(root, loaded);
+    } finally {
+      root.style.minHeight = prevMinHeight;
+    }
     window.scrollTo(0, scroll);
     if (focusId) document.getElementById(focusId)?.focus();
   };
@@ -200,6 +224,7 @@ async function loadDashboard(root) {
 // through here, so switching months never re-fetches the whole history.
 async function renderLoaded(root, data) {
   root.replaceChildren();
+  filterUnknown = null;
 
   const {
     allTransactions,
@@ -354,6 +379,17 @@ async function renderLoaded(root, data) {
   left.append(h, addBtn, transferBtn(accounts), editBtn);
   header.append(left, monthBar(month, rerender));
   root.appendChild(header);
+
+  // Sticky table headers sit below the sticky `.dash-header`. Publish its height
+  // as `--dash-header-h` (read by `.tx-table thead th`) and keep it in sync —
+  // the header wraps to a second row on narrow screens, so its height is not
+  // constant. A fresh observer per render avoids leaking the previous header.
+  const syncHeaderOffset = () =>
+    root.style.setProperty('--dash-header-h', `${header.offsetHeight}px`);
+  if (headerResizeObserver) headerResizeObserver.disconnect();
+  headerResizeObserver = new ResizeObserver(syncHeaderOffset);
+  headerResizeObserver.observe(header);
+  syncHeaderOffset();
 
   // Part 6 — "one-screen overview": summary tiles + an accounts overview row.
   // `#total-myr` moves from the header into the expense tile — same id, same
@@ -520,15 +556,15 @@ function recentTransactions({ transactions, tableProps, categoryNames }) {
   const toolbar = document.createElement('div');
   toolbar.className = 'd-flex flex-wrap align-items-center gap-2';
 
+  // Single bordered wrapper around the icon + input (no input-group seam); the
+  // focus ring is drawn by `.tx-search:focus-within` on the whole pill.
   const searchWrap = document.createElement('div');
-  searchWrap.className = 'input-group input-group-sm tx-search';
-  const searchIcon = document.createElement('span');
-  searchIcon.className = 'input-group-text';
-  searchIcon.appendChild(icon('search', { size: 15 }));
+  searchWrap.className = 'tx-search';
+  const searchIcon = icon('search', { size: 15, className: 'tx-search-icon' });
   const search = document.createElement('input');
   search.type = 'search';
   search.id = 'tx-search';
-  search.className = 'form-control';
+  search.className = 'tx-search-input';
   search.placeholder = t('dash.search');
   search.setAttribute('aria-label', t('dash.search'));
   searchWrap.append(searchIcon, search);
@@ -551,6 +587,14 @@ function recentTransactions({ transactions, tableProps, categoryNames }) {
     opt.textContent = name;
     filter.appendChild(opt);
   }
+  // The uncategorized bucket is offered only when this month has such rows; the
+  // Category-share "Unknown" slice drives this same filter via filterUnknown.
+  if (transactions.some((tx) => !tx.category_id)) {
+    const unknownOpt = document.createElement('option');
+    unknownOpt.value = '__unknown__';
+    unknownOpt.textContent = t('col.unknown');
+    filter.appendChild(unknownOpt);
+  }
 
   toolbar.append(searchWrap, filter);
   head.appendChild(toolbar);
@@ -564,7 +608,8 @@ function recentTransactions({ transactions, tableProps, categoryNames }) {
     let shown = 0;
     for (const tr of rows) {
       const matchesText = !q || tr.textContent.toLowerCase().includes(q);
-      const matchesCat = !cat || tr.dataset.cat === cat;
+      // `__unknown__` is the sentinel for "no category" (dataset.cat is '' then).
+      const matchesCat = !cat || (cat === '__unknown__' ? !tr.dataset.cat : tr.dataset.cat === cat);
       const ok = matchesText && matchesCat;
       tr.classList.toggle('d-none', !ok);
       if (ok) shown += 1;
@@ -573,6 +618,11 @@ function recentTransactions({ transactions, tableProps, categoryNames }) {
   };
   search.addEventListener('input', apply);
   filter.addEventListener('change', apply);
+  // Exposed for the Category-share "Unknown" row: select the sentinel + apply.
+  filterUnknown = () => {
+    filter.value = '__unknown__';
+    apply();
+  };
 
   const empty = document.createElement('p');
   empty.className = 'text-center text-muted py-4 d-none';
@@ -812,6 +862,28 @@ function summaryStrip(current, previous, prevKey) {
     return el;
   };
 
+  // NET's third line: the absolute net change vs the previous month. A
+  // percentage delta is meaningless once the prior net is negative (it flips
+  // sign), so this shows the RM difference instead — net rising is good.
+  const netDelta = (curNet, prevStats) => {
+    const el = document.createElement('div');
+    el.className = 'tile-delta';
+    const hasBaseline = prevStats.income > 0 || prevStats.expense > 0;
+    if (!hasBaseline) {
+      el.classList.add('text-muted');
+      el.textContent = t('dash.compare.noBaseline');
+      return el;
+    }
+    const prevNet = prevStats.income - prevStats.expense;
+    const diff = curNet - prevNet;
+    const up = diff > 0.005;
+    const down = diff < -0.005;
+    el.classList.add(up ? 'text-success' : down ? 'text-danger' : 'text-muted');
+    const arrow = up ? '▲' : down ? '▼' : '·';
+    el.textContent = `${arrow} ${formatMoney(Math.abs(diff), 'MYR')} ${t('dash.compare.vs')} ${monthLabel(prevKey)}`;
+    return el;
+  };
+
   const tile = (label, value, extra, deltaEl) => {
     const col = document.createElement('div');
     col.className = 'col-6 col-md-4';
@@ -846,7 +918,9 @@ function summaryStrip(current, previous, prevKey) {
   expenseTile.querySelector('.tile-value').id = 'total-myr';
   strip.appendChild(expenseTile);
   const net = current.income - current.expense;
-  strip.appendChild(tile(t('dash.net'), formatMoney(net, 'MYR'), net >= 0 ? 'pos' : 'neg'));
+  strip.appendChild(
+    tile(t('dash.net'), formatMoney(net, 'MYR'), net >= 0 ? 'pos' : 'neg', netDelta(net, previous)),
+  );
 
   wrap.appendChild(strip);
   return wrap;
@@ -939,15 +1013,25 @@ function accountsOverview(accounts, transactions) {
     name.className = 'chip-name';
     name.textContent = acc.name;
 
+    const balanceValue = estBalance(acc, transactions);
     const balance = document.createElement('span');
     balance.className = 'chip-balance';
-    balance.textContent = formatMoney(estBalance(acc, transactions), acc.currency || 'MYR');
+    // Negative balances get the same subtle red as NET, so overdrawn accounts
+    // pop out from the wall of RM 0.00 chips.
+    if (balanceValue < 0) balance.classList.add('neg');
+    balance.textContent = formatMoney(balanceValue, acc.currency || 'MYR');
 
-    const cur = document.createElement('span');
-    cur.className = 'chip-cur';
-    cur.textContent = acc.currency || 'MYR';
-
-    chip.append(name, balance, cur);
+    chip.append(name, balance);
+    // The currency chip is redundant for MYR accounts (the dashboard's base
+    // currency) — showing it only for foreign accounts also keeps all six
+    // chips on a single row instead of wrapping the last one onto its own.
+    const currency = acc.currency || 'MYR';
+    if (currency !== 'MYR') {
+      const cur = document.createElement('span');
+      cur.className = 'chip-cur';
+      cur.textContent = currency;
+      chip.appendChild(cur);
+    }
     row.appendChild(chip);
   }
   wrap.appendChild(row);
@@ -1055,6 +1139,7 @@ async function homeOverview(
     const entry = sums.get(key) ?? {
       name: hasCat ? categoryNames.get(tx.category_id) : t('col.unknown'),
       color: hasCat ? categoryColors.get(tx.category_id) : null,
+      unknown: !hasCat,
       value: 0,
     };
     entry.value += myr;
@@ -1076,9 +1161,29 @@ async function homeOverview(
     shareBox.appendChild(empty);
   } else {
     ranked.forEach((entry, i) => {
-      const color = entry.color ?? HOME_PALETTE[i % HOME_PALETTE.length];
+      const color =
+        entry.color ?? (entry.unknown ? UNKNOWN_COLOR : HOME_PALETTE[i % HOME_PALETTE.length]);
       const row = document.createElement('div');
       row.className = 'share-row';
+      // The uncategorized bucket is a workflow shortcut: clicking it filters the
+      // transaction table to rows with no category and scrolls down to it.
+      if (entry.unknown) {
+        row.classList.add('share-row-clickable');
+        row.setAttribute('role', 'button');
+        row.tabIndex = 0;
+        row.title = t('dash.filterUnknown');
+        const goUnknown = () => {
+          filterUnknown?.();
+          document.getElementById('recent-transactions')?.scrollIntoView({ block: 'start' });
+        };
+        row.addEventListener('click', goUnknown);
+        row.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            goUnknown();
+          }
+        });
+      }
       const top = document.createElement('div');
       top.className = 'share-top';
       const nm = document.createElement('span');
@@ -1153,8 +1258,21 @@ async function homeOverview(
     } else {
       assetBox.replaceChildren();
       const empty = document.createElement('div');
-      empty.className = 'home-empty';
-      empty.textContent = t('dash.noAssetData');
+      empty.className = 'home-empty home-empty-asset';
+      empty.appendChild(icon('wallet', { size: 30, className: 'home-empty-icon' }));
+      const msg = document.createElement('p');
+      msg.className = 'home-empty-msg';
+      msg.textContent = t('dash.noAssetData');
+      const cta = document.createElement('button');
+      cta.type = 'button';
+      cta.className = 'home-empty-cta';
+      cta.textContent = t('dash.setStartingBalances');
+      cta.addEventListener('click', () =>
+        openAccountManager({
+          onChanged: () => window.dispatchEvent(new Event('mt:data-changed')),
+        }),
+      );
+      empty.append(msg, cta);
       assetBox.appendChild(empty);
     }
 

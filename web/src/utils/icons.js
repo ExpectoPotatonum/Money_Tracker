@@ -31,6 +31,20 @@ const PATHS = {
   chevronLeft: '<path d="m15 5-7 7 7 7"/>',
   chevronRight: '<path d="m9 5 7 7-7 7"/>',
   dot: '<circle cx="12" cy="12" r="3"/>',
+  // Theme toggle (sidebar) — monochrome line icons matching the other sidebar
+  // glyphs, replacing the bright-yellow ☀️/🌙 emoji.
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  // Asset-composition empty state.
+  wallet:
+    '<path d="M19 7V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H5"/><circle cx="16.5" cy="13" r="1.3"/>',
+  // Edit-mode row actions. These replace the 🔁 emoji and the raster
+  // `red-cross-mark.png`, so every row action is now a monochrome line icon
+  // that inherits `currentColor` like the rest of the set.
+  repeat:
+    '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  trash:
+    '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M6 6v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6"/><path d="M10 11v6M14 11v6"/>',
 };
 
 export function icon(name, { size = 18, className = '', title = null } = {}) {

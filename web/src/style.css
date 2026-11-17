@@ -285,7 +285,7 @@ dialog::backdrop {
   border: 1px solid var(--mt-border);
   border-radius: var(--mt-radius-card);
   box-shadow: var(--mt-shadow-card);
-  padding: 0.8rem 1.1rem;
+  padding: 0.7rem 1.1rem;
   height: 100%;
 }
 :root[data-bs-theme='dark'] .summary-tile {
@@ -340,6 +340,10 @@ dialog::backdrop {
   font-size: 0.88rem;
   color: var(--bs-secondary-color);
 }
+/* Negative balances use the same red as NET so overdrawn accounts pop. */
+.account-chip .chip-balance.neg {
+  color: #dc3545;
+}
 .account-chip .chip-cur {
   font-size: 0.62rem;
   font-weight: 600;
@@ -357,8 +361,9 @@ dialog::backdrop {
    (renderNav was replaced by renderSidebar in main.js). Kept for reference;
    nothing in the current DOM carries those classes anymore. */
 
-/* Sidebar surface: deep bee-green in light, pure OLED black in dark — the
-   BeeCount-Cloud web identity. Content area follows the active theme. */
+/* Sidebar surface: deep bee-green in BOTH themes — the BeeCount-Cloud web
+   identity. Dark mode keeps the green rail (only the content area goes OLED
+   black), so the brand colour survives a theme flip. */
 :root {
   --mt-sidebar-bg: #0b3d2e;
   --mt-sidebar-fg: #e7f0ea;
@@ -371,7 +376,9 @@ dialog::backdrop {
   --app-pad: 28px;
 }
 :root[data-bs-theme='dark'] {
-  --mt-sidebar-bg: #000;
+  /* Keep the bee-green rail in dark mode too — only the content area goes OLED
+     black. Dark mode deepens the green so it still reads as "dark". */
+  --mt-sidebar-bg: #062e1f;
   --mt-sidebar-fg: #e9ecef;
   --mt-sidebar-hover: rgba(255, 255, 255, 0.06);
   --mt-sidebar-active: rgba(52, 211, 153, 0.18);
@@ -400,22 +407,34 @@ dialog::backdrop {
      rail horizontally (the sidebar content fits within 100vh). */
   overflow: visible;
   transition:
-    width 0.18s ease,
-    flex-basis 0.18s ease;
+    width 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    flex-basis 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  /* Left padding clears the fixed hamburger sitting in the page's top-left. */
-  padding: 0.35rem 0.6rem 0.95rem 2.4rem;
+  gap: 0.65rem;
+  /* Same left inset + icon column as `.nav-link`, so the title lines up with the
+     nav labels. The fixed hamburger sits in the `.sidebar-brand-slot` space. */
+  padding: 0.5rem 0.9rem;
   margin-bottom: 0.35rem;
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--mt-sidebar-fg);
   text-decoration: none;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  /* Keep the title on one line, and clip it while the rail is mid-animation
+     (otherwise it wraps to two lines for a frame as the width grows). */
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* Empty 18px slot that mirrors a nav icon: it keeps the brand title aligned
+   with the nav labels and reserves the column the fixed hamburger occupies. */
+.sidebar-brand-slot {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
 }
 .sidebar-brand:hover {
   color: var(--mt-sidebar-fg);
@@ -436,6 +455,7 @@ dialog::backdrop {
   padding: 0.5rem 0.9rem;
   font-weight: 500;
   white-space: nowrap;
+  overflow: hidden;
 }
 .app-sidebar .nav-link svg,
 .sidebar-btn svg {
@@ -473,8 +493,12 @@ dialog::backdrop {
   padding: 0.5rem 0.9rem;
   font-weight: 500;
   white-space: nowrap;
+  overflow: hidden;
 }
 .sidebar-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   text-align: center;
   flex: 0 0 18px;
@@ -515,16 +539,21 @@ dialog::backdrop {
   padding-right: 0.5rem;
 }
 .app-shell.sidebar-collapsed .sidebar-brand {
-  padding-left: 0.6rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
 }
 
 /* Hamburger, fixed to the top-left of the WHOLE page (not inside the rail), so
-   it stays put when the sidebar collapses. It sits over the dark rail, so it
-   borrows the sidebar palette. */
+   it stays put when the sidebar collapses. It is styled as a bare icon — like
+   the nav glyphs — and positioned so it sits in the same icon column: its
+   centre lands on the nav icons' centre (0.8rem rail pad + 0.9rem link pad +
+   half an 18px icon). It borrows the sidebar palette. */
 .sidebar-toggle {
   position: fixed;
-  top: 12px;
-  left: 12px;
+  /* Vertically centred on the brand title (rail pad 1.1rem + brand pad 0.5rem +
+     half a title line) so the hamburger and the title share an eye level. */
+  top: 1.3rem;
+  left: calc(1.7rem + (18px - 34px) / 2);
   z-index: 1045;
   display: inline-flex;
   align-items: center;
@@ -532,9 +561,9 @@ dialog::backdrop {
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: none;
   border-radius: 10px;
-  background: var(--mt-sidebar-bg);
+  background: transparent;
   color: var(--mt-sidebar-fg);
   opacity: 0.85;
   transition:
@@ -544,6 +573,11 @@ dialog::backdrop {
 .sidebar-toggle:hover {
   opacity: 1;
   background: var(--mt-sidebar-hover);
+}
+/* Collapsed rail: the nav icons are centred in the narrower rail, so the
+   hamburger moves left to stay on the same column. */
+.app-shell.sidebar-collapsed .sidebar-toggle {
+  left: 16.5px;
 }
 
 /* Collapsed-rail tooltips: the text label is display:none, so the name comes
@@ -660,7 +694,7 @@ dialog::backdrop {
   border: 1px solid var(--mt-border);
   border-radius: var(--mt-radius-card);
   box-shadow: var(--mt-shadow-card);
-  padding: 1rem 1.1rem;
+  padding: 0.85rem 1.1rem;
   height: 100%;
 }
 :root[data-bs-theme='dark'] .home-panel {
@@ -669,7 +703,7 @@ dialog::backdrop {
   box-shadow: none;
 }
 .home-panel .overview-label {
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
 }
 .chart-box {
   position: relative;
@@ -679,7 +713,7 @@ dialog::backdrop {
   max-height: 220px;
 }
 .share-row {
-  margin-bottom: 0.7rem;
+  margin-bottom: 0.5rem;
 }
 .share-row:last-child {
   margin-bottom: 0;
@@ -689,7 +723,7 @@ dialog::backdrop {
   justify-content: space-between;
   align-items: baseline;
   gap: 0.75rem;
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.15rem;
   font-size: 0.85rem;
 }
 .share-name {
@@ -709,6 +743,44 @@ dialog::backdrop {
   color: var(--bs-secondary-color);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+.home-empty-asset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  height: 100%;
+  text-align: center;
+}
+.home-empty-icon {
+  color: var(--bs-secondary-color);
+  opacity: 0.6;
+}
+.home-empty-msg {
+  margin: 0;
+}
+.home-empty-cta {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--mt-accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.home-empty-cta:hover {
+  text-decoration: underline;
+}
+
+/* The uncategorized slice is a shortcut: clicking it filters the table. */
+.share-row-clickable {
+  cursor: pointer;
+  border-radius: var(--mt-radius-card);
+}
+.share-row-clickable:hover,
+.share-row-clickable:focus-visible {
+  outline: none;
+  background: var(--bs-tertiary-bg);
 }
 
 /* ------------------------------------------- header actions + edit switch */
@@ -824,8 +896,43 @@ dialog::backdrop {
 .dash-section-head {
   gap: 0.75rem;
 }
+/* Single bordered pill: the icon and the input live inside one wrapper (the old
+   input-group drew a visible seam between the icon box and the field). The
+   whole pill highlights on focus via :focus-within. */
 .tx-search {
-  width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 240px;
+  padding: 0 0.65rem;
+  border: 1px solid var(--mt-border);
+  border-radius: 999px;
+  background: var(--bs-body-bg);
+  color: var(--bs-secondary-color);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.tx-search:focus-within {
+  border-color: var(--mt-accent);
+  box-shadow: 0 0 0 0.18rem rgba(var(--mt-accent-rgb), 0.18);
+  color: var(--mt-accent);
+}
+.tx-search .tx-search-icon {
+  flex: 0 0 auto;
+}
+.tx-search .tx-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.32rem 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--bs-body-color);
+  font-size: 0.875rem;
+}
+.tx-search .tx-search-input::placeholder {
+  color: var(--bs-secondary-color);
 }
 
 /* Tinted category pill — a light wash of the category's own colour. */
@@ -849,8 +956,59 @@ dialog::backdrop {
 .tx-table th {
   padding: 12px 16px;
 }
+/* AMOUNT is right-aligned while ACCOUNT is left-aligned, so the boundary
+   between columns 4 and 5 needs extra breathing room — otherwise the numbers
+   crowd the account names. */
+.tx-table th:nth-child(4),
+.tx-table td:nth-child(4) {
+  padding-right: 28px;
+}
+.tx-table th:nth-child(5),
+.tx-table td:nth-child(5) {
+  padding-left: 28px;
+}
 .tx-table .amount-main {
   font-variant-numeric: tabular-nums;
+}
+/* Sticky header. It parks directly under the sticky `.dash-header`, whose
+   height is published as `--dash-header-h` by the dashboard (it wraps to two
+   rows on narrow screens). Opaque body-bg so rows scroll beneath it; the
+   bottom rule is a box-shadow because `border-collapse: collapse` drops a
+   sticky th's own border. */
+.tx-table thead th {
+  position: sticky;
+  top: var(--dash-header-h, 0px);
+  z-index: 5;
+  background-color: var(--bs-body-bg);
+  box-shadow: inset 0 -1px 0 var(--bs-border-color);
+}
+
+/* Edit-mode row actions — recurring toggle + delete. Bare line icons (SVG) that
+   inherit `currentColor`, matching the rest of the icon set. */
+.row-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bs-secondary-color);
+  opacity: 0.55;
+  line-height: 1;
+  vertical-align: middle;
+}
+.row-action-btn:hover,
+.row-action-btn:focus-visible {
+  opacity: 1;
+  color: var(--mt-accent);
+}
+.row-action-btn.is-on {
+  opacity: 1;
+  color: var(--mt-accent);
+}
+.row-action-danger:hover,
+.row-action-danger:focus-visible {
+  color: #dc3545;
+}
+.row-action-btn + .row-action-btn {
+  margin-left: 0.6rem;
 }
 .amount-sub {
   margin-top: 2px;

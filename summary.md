@@ -105,6 +105,21 @@ A personal finance tracker: an Android app that captures banking/e-wallet push n
   - **Category share** — each bar uses its **category's own colour** with a colour dot + `%` label.
   - **Budget manager fix** — the Add-budget category select was hidden by `d-none` on its inner div while its label stayed visible; the whole field group now hides/shows together and Add stays disabled until the first reload.
   - **CI** — `npm run format:check` had been failing for three pushes (the tree was never fully Prettier-formatted); a formatting-only commit fixes it.
+- **Dashboard UI polish batch 2 (2026-11-17)** — a third owner-requested pass, all web-side (no migrations). Reclaims ~70–90px of vertical space and tidies affordances:
+  - **Tighter layout** — `.summary-tile` / `.home-panel` padding and the category-share row gaps reduced, so the first transactions stay above the fold.
+  - **Accounts overview** — the redundant **MYR chip is dropped for MYR accounts** (kept for foreign ones), which keeps all six chips on one row; **negative balances** show in the NET red (`#dc3545`).
+  - **NET (MYR) tile** — new third line: **absolute net change vs the previous month** (`▲/▼ RM x vs <Month>`; a percentage was rejected because it flips sign when the prior net is negative).
+  - **Search box** — the icon + input are now one bordered pill (`.tx-search`) that highlights on `:focus-within`, instead of a Bootstrap `input-group` with a visible seam.
+  - **Category share** — the **Unknown** bucket is muted slate `#64748b` and **clickable**: it filters the table to uncategorized rows (via an `__unknown__` sentinel in the category filter).
+  - **Asset composition empty state** — wallet icon + "No balance data yet." + a **"Set starting balances →"** link that opens the accounts manager.
+  - **Sidebar theme toggle** — ☀️/🌙 emoji replaced by monochrome line icons; **edit-mode toggle no longer jumps the page** (`softRefresh` pins the view height while it rebuilds); the empty-category picker now reads **`- Pick -`**.
+- **Dashboard UI polish batch 3 (2026-11-17)** — sidebar rail behaviour + row actions + sticky headers:
+  - **Hover-expand sidebar** — **collapsed by default**; hovering the rail (or the hamburger, now a fixed child of the rail) expands it, leaving collapses it unless **pinned**, and clicking the hamburger **pins** it (persisted as `mt_sidebar_pinned`, replacing `mt_sidebar_collapsed`). Smoother `0.32s` ease-out transition.
+  - **Sidebar alignment** — the brand title shares the nav links' left inset + icon column, and the hamburger sits on the nav-icon column in both states; the title is `nowrap` + clipped so it no longer flashes to two lines mid-animation.
+  - **Edit-mode row actions are inline SVG** — the 🔁 toggle and the raster `red-cross-mark.png` delete button become `repeat` / `trash` line icons (the app's last raster icon is gone).
+  - **Sticky table headers** — `.tx-table thead th` sticks under the sticky `.dash-header` (height published as `--dash-header-h`) for Recent Transactions, Money in and Transfers.
+  - **Dark mode keeps the green rail** — `--mt-sidebar-bg` dark is now a deeper bee-green `#062e1f` (was `#000`).
+  - **Copy trims** — the offline banner drops `(agents.md §10)`; the Raw notifications hint drops the em-dash clause + `(AGENTS §16)`.
 
 **Architecture principle (`ARCHITECTURE.md` §5):** No SPA framework yet. Plain ES modules + small render functions + thin `/api` layer. *"If UI complexity outgrows this (once charts/budgets/PWA land), the honest next step is a lightweight reactive layer (Preact or Alpine.js) rather than jumping straight to React."* Revisit at that point, not now.
 

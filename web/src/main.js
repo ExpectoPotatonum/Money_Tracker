@@ -19,9 +19,10 @@ import { applyTheme, cycleTheme } from './lib/theme.js';
 
 const app = document.getElementById('app');
 
-// Sidebar collapsed state persists across reloads/routes. The toggle only flips
-// this flag; CSS does the actual layout (labels hide, icons remain).
-const SIDEBAR_KEY = 'mt_sidebar_collapsed';
+// The rail is collapsed by default. Hovering it expands it (push layout); the
+// hamburger *pins* it expanded, persisted across reloads/routes. CSS does the
+// layout (labels hide, icons remain) — this only flips the shell's class.
+const SIDEBAR_PIN_KEY = 'mt_sidebar_pinned';
 
 installLogger();
 
@@ -44,20 +45,20 @@ function notifyDataChanged() {
   window.dispatchEvent(new CustomEvent('mt:data-changed'));
 }
 
-function sidebarCollapsed() {
+// Whether the rail is pinned expanded. Default false → collapsed on load.
+function sidebarPinned() {
   try {
-    return localStorage.getItem(SIDEBAR_KEY) === '1';
+    return localStorage.getItem(SIDEBAR_PIN_KEY) === '1';
   } catch {
     return false;
   }
 }
 
-function setSidebarCollapsed(shell, collapsed) {
-  shell.classList.toggle('sidebar-collapsed', collapsed);
+function setSidebarPinned(pinned) {
   try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
+    localStorage.setItem(SIDEBAR_PIN_KEY, pinned ? '1' : '0');
   } catch {
-    // localStorage unavailable — collapse still works for this page.
+    // localStorage unavailable — the pin still works for this page.
   }
 }
 
@@ -65,14 +66,19 @@ function renderSidebar() {
   const nav = document.createElement('nav');
   nav.className = 'app-sidebar';
 
-  // Brand block — BeeCount-style: app title, no logo.
+  // Brand block — BeeCount-style: app title, no logo. The empty slot mirrors a
+  // nav icon so the title aligns with the nav labels and reserves the column
+  // the fixed hamburger occupies (it sits in the top-left of the rail).
   const brand = document.createElement('a');
   brand.className = 'sidebar-brand';
   brand.href = '#/';
+  const brandSlot = document.createElement('span');
+  brandSlot.className = 'sidebar-brand-slot';
+  brandSlot.setAttribute('aria-hidden', 'true');
   const brandTitle = document.createElement('span');
   brandTitle.className = 'sidebar-brand-title sidebar-label';
   brandTitle.textContent = t('app.title');
-  brand.appendChild(brandTitle);
+  brand.append(brandSlot, brandTitle);
   nav.appendChild(brand);
 
   // Primary links. Keep the .nav-link class so the e2e `nav .nav-link.active`
@@ -161,8 +167,11 @@ function renderSidebar() {
   const themeLabel = document.createElement('span');
   themeLabel.className = 'sidebar-label';
   themeLabel.textContent = t('nav.theme');
+  // Monochrome line icon (Sun/Moon), matching Settings / Sign out — the old
+  // bright-yellow ☀️/🌙 emoji stood out against the uniform sidebar glyphs.
   const syncThemeIcon = () => {
-    themeGlyph.textContent = document.documentElement.dataset.bsTheme === 'dark' ? '🌙' : '☀️';
+    const dark = document.documentElement.dataset.bsTheme === 'dark';
+    themeGlyph.replaceChildren(icon(dark ? 'moon' : 'sun', { size: 18 }));
   };
   themeBtn.addEventListener('click', () => {
     cycleTheme();
@@ -203,24 +212,24 @@ function renderSidebar() {
   return nav;
 }
 
-// Hamburger toggle, fixed to the top-left of the whole page (the chevron it
-// replaced lived inside the rail). Toggles the shell's collapsed class and
-// keeps the persisted flag in sync; the icon never changes.
-function sidebarToggle(shell) {
+// Hamburger, fixed to the top-left of the whole page (the rail itself sits
+// below it). Clicking it PINS the rail expanded (click again to unpin, back to
+// hover-only); it never moves when the rail collapses. The icon never changes.
+function sidebarToggle(isPinned, onToggle) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'sidebar-collapse-btn';
   btn.className = 'sidebar-toggle';
   const sync = () => {
-    const collapsed = shell.classList.contains('sidebar-collapsed');
-    const label = t(collapsed ? 'nav.expand' : 'nav.collapse');
-    btn.setAttribute('aria-expanded', String(!collapsed));
+    const pinned = isPinned();
+    const label = t(pinned ? 'nav.collapse' : 'nav.expand');
+    btn.setAttribute('aria-expanded', String(pinned));
     btn.setAttribute('aria-label', label);
     btn.title = label;
   };
   btn.appendChild(icon('menu', { size: 20 }));
   btn.addEventListener('click', () => {
-    setSidebarCollapsed(shell, !shell.classList.contains('sidebar-collapsed'));
+    onToggle(!isPinned());
     sync();
   });
   sync();
@@ -238,11 +247,47 @@ async function render() {
   viewRoot.className = 'app-view';
   const shell = document.createElement('div');
   shell.className = 'app-shell';
-  shell.classList.toggle('sidebar-collapsed', sidebarCollapsed());
-  // The hamburger lives OUTSIDE the rail, fixed to the top-left of the page,
-  // so it stays put when the sidebar collapses (the old in-rail chevron moved
-  // with it). It still drives the shell's collapsed class.
-  shell.append(renderSidebar(), viewRoot, sidebarToggle(shell));
+  const sidebarEl = renderSidebar();
+
+  // Collapsed by default; hovering (or keyboard focus) expands it, and the
+  // hamburger pins it expanded. `hovered` is transient, `pinned` persists.
+  let pinned = sidebarPinned();
+  let hovered = false;
+  const applySidebarState = () => shell.classList.toggle('sidebar-collapsed', !(pinned || hovered));
+  applySidebarState();
+  sidebarEl.addEventListener('mouseenter', () => {
+    hovered = true;
+    applySidebarState();
+  });
+  sidebarEl.addEventListener('mouseleave', () => {
+    hovered = false;
+    applySidebarState();
+  });
+  sidebarEl.addEventListener('focusin', () => {
+    hovered = true;
+    applySidebarState();
+  });
+  sidebarEl.addEventListener('focusout', (e) => {
+    if (!sidebarEl.contains(e.relatedTarget)) {
+      hovered = false;
+      applySidebarState();
+    }
+  });
+
+  // The hamburger is fixed to the top-left of the page (so it never moves when
+  // the rail collapses) but lives INSIDE the rail: a fixed child stays put while
+  // the rail animates, and hovering the hamburger then counts as hovering the
+  // rail, so the rail expands from the icon too.
+  const toggle = sidebarToggle(
+    () => pinned,
+    (next) => {
+      pinned = next;
+      setSidebarPinned(next);
+      applySidebarState();
+    },
+  );
+  sidebarEl.append(toggle);
+  shell.append(sidebarEl, viewRoot);
   app.replaceChildren(shell);
 
   try {
